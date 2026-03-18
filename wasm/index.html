@@ -1,0 +1,3257 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>ll/34 (WASM GUI)</title>
+
+        <!-- xterm.js -->
+        <link
+            rel="stylesheet"
+            href="https://cdn.jsdelivr.net/npm/xterm@5/css/xterm.css"
+        />
+        <script src="https://cdn.jsdelivr.net/npm/xterm@5/lib/xterm.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8/lib/xterm-addon-fit.js"></script>
+
+        <!-- 7-segment display font (local) -->
+        <style>
+            @font-face {
+                font-family: "DSEG7Classic";
+                src: url("assets/DSEG7Classic-Italic.woff2") format("woff2");
+                font-weight: normal;
+                font-style: italic;
+            }
+            @font-face {
+                font-family: "VT220";
+                src: url("assets/VT220.ttf") format("truetype");
+                font-weight: normal;
+                font-style: normal;
+            }
+        </style>
+
+        <style>
+            * {
+                box-sizing: border-box;
+                margin: 0;
+                padding: 0;
+            }
+            html {
+                background: #000;
+                height: 100%;
+                overflow-x: hidden;
+            }
+            body {
+                background: #000;
+                color: #e6edf3;
+                font-family: "Segoe UI", system-ui, sans-serif;
+                min-height: 100%;
+                height: auto;
+                overflow-y: auto;
+                overflow-x: hidden;
+                display: flex;
+                flex-direction: column;
+            }
+
+            /* ── Front panel ── */
+            #panel-wrap {
+                position: relative;
+                width: 100%;
+                flex-shrink: 0;
+                line-height: 0;
+                cursor: default;
+            }
+            #panel-img {
+                width: 100%;
+                display: block;
+                user-select: none;
+                -webkit-user-drag: none;
+            }
+            #panel-overlay {
+                position: absolute;
+                inset: 0;
+            }
+
+            /* Power button ON overlay */
+            #power-btn-on {
+                position: absolute;
+                pointer-events: none;
+                opacity: 0;
+                transition: opacity 0.25s ease;
+            }
+            #power-btn-on.visible {
+                opacity: 1;
+            }
+
+            /* Clickable power zone */
+            #power-zone {
+                position: absolute;
+                cursor: pointer;
+                border-radius: 50%;
+            }
+
+            /* 7-segment display */
+            #seg-display {
+                position: absolute;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                pointer-events: none;
+                overflow: hidden;
+                background: 392b2a;
+                border-radius: 2px;
+            }
+            .seg-cell {
+                position: relative;
+                display: inline-block;
+            }
+            .seg-ghost {
+                font-family: "DSEG7Classic", monospace;
+                font-style: italic;
+                color: #463032;
+                letter-spacing: 0.77em;
+                margin-right: -1em; /* cancel trailing letter-spacing */
+                font-size: 1em;
+                pointer-events: none;
+                user-select: none;
+            }
+            .seg-value {
+                font-family: "DSEG7Classic", monospace;
+                font-style: italic;
+                color: #cc1100;
+                text-shadow:
+                    0 0 3px #ff2200,
+                    0 0 7px #aa0000;
+                letter-spacing: 0.77em;
+                font-size: 1em;
+                position: absolute;
+                left: 0;
+                top: 0;
+            }
+            .seg-value.off {
+                color: transparent;
+                text-shadow: none;
+            }
+
+            /* LED indicators */
+            .led-dot {
+                position: absolute;
+                border-radius: 50%;
+                background: transparent;
+                pointer-events: none;
+                transition:
+                    background 0.12s,
+                    box-shadow 0.12s;
+            }
+            .led-dot.on {
+                background: #ff3300;
+                box-shadow:
+                    0 0 4px 2px #ff2200,
+                    0 0 10px 3px #cc1100;
+            }
+
+            /* Panel buttons (invisible hit areas) */
+            .panel-btn {
+                position: absolute;
+                background: transparent;
+                border: none;
+                cursor: pointer;
+                padding: 0;
+                transform: translate(-50%, -50%);
+                border-radius: 3px;
+                -webkit-tap-highlight-color: transparent;
+            }
+            .panel-btn.pressed {
+                box-shadow: 0 0 12px 6px rgba(200, 200, 200, 0.6);
+                border-radius: 50%;
+            }
+            /* CNTRL key latched (sticky modifier) */
+            .panel-btn.active {
+                /*background: rgba(255, 120, 0, 0.35);*/
+                box-shadow: 0 0 12px 6px rgba(200, 200, 200, 0.6);
+                border-radius: 50%;
+            }
+            /* Debug overlay: show button outlines
+    .panel-btn.debug-vis {
+      background: rgba(255, 200, 0, 0.25);
+      border: 1px solid rgba(255, 200, 0, 0.7);
+    }
+    */
+
+            /* ── Bottom section: tabs + terminal ── */
+            #bottom {
+                flex: 1;
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+                background: #0d1117;
+                min-height: 320px; /* terminal toujours accessible */
+            }
+            #tabs {
+                display: flex;
+                gap: 0;
+                background: #161b22;
+                border-bottom: 1px solid #30363d;
+                flex-shrink: 0;
+            }
+            .tab-btn {
+                padding: 7px 20px;
+                background: none;
+                border: none;
+                border-bottom: 2px solid transparent;
+                color: #8b949e;
+                font-size: 0.8rem;
+                cursor: pointer;
+                transition:
+                    color 0.15s,
+                    border-color 0.15s;
+            }
+            .tab-btn:hover {
+                color: #e6edf3;
+            }
+            .tab-btn.active {
+                color: #58a6ff;
+                border-bottom-color: #58a6ff;
+            }
+            .tab-panel {
+                display: none;
+                flex: 1;
+                min-height: 0;
+            }
+            .tab-panel.active {
+                display: flex;
+                flex-direction: column;
+            }
+
+            /* ── Docs tab ── */
+            .docs-layout {
+                display: flex;
+                flex: 1;
+                min-height: 0;
+            }
+            .docs-nav {
+                display: flex;
+                flex-direction: column;
+                width: 140px;
+                min-width: 140px;
+                border-right: 1px solid #30363d;
+                padding: 8px 0;
+                gap: 2px;
+            }
+            .docs-nav-btn {
+                background: none;
+                border: none;
+                cursor: pointer;
+                text-align: left;
+                padding: 8px 16px;
+                color: #8b949e;
+                font-size: 12px;
+                font-family: inherit;
+                border-left: 2px solid transparent;
+                transition:
+                    color 0.12s,
+                    border-color 0.12s,
+                    background 0.12s;
+            }
+            .docs-nav-btn:hover {
+                color: #e6edf3;
+                background: rgba(255, 255, 255, 0.04);
+            }
+            .docs-nav-btn.active {
+                color: #58a6ff;
+                border-left-color: #58a6ff;
+                background: rgba(88, 166, 255, 0.06);
+            }
+            .docs-content {
+                flex: 1;
+                min-width: 0;
+                overflow-y: auto;
+                padding: 20px 28px;
+            }
+            .docs-page {
+                display: none;
+            }
+            .docs-page.active {
+                display: block;
+            }
+            .docs-page h2 {
+                color: #e6edf3;
+                font-size: 16px;
+                margin: 0 0 12px 0;
+                padding-bottom: 8px;
+                border-bottom: 1px solid #30363d;
+            }
+            .docs-page p,
+            .docs-page li {
+                color: #c9d1d9;
+                font-size: 13px;
+                line-height: 1.6;
+            }
+            .docs-page code {
+                background: #161b22;
+                padding: 2px 6px;
+                border-radius: 3px;
+                font-size: 12px;
+                color: #79c0ff;
+            }
+            .docs-page pre {
+                background: #161b22;
+                padding: 12px;
+                border-radius: 6px;
+                overflow-x: auto;
+                font-size: 12px;
+                color: #c9d1d9;
+            }
+            .docs-page h3 {
+                color: #e6edf3;
+                font-size: 14px;
+                margin: 18px 0 8px 0;
+            }
+            .docs-page ul {
+                padding-left: 20px;
+            }
+            .docs-page a {
+                color: #58a6ff;
+                text-decoration: none;
+            }
+            .docs-page a:hover {
+                text-decoration: underline;
+            }
+
+            /* Console tab */
+            #tab-console {
+                padding: 4px;
+            }
+            #terminal {
+                flex: 1;
+            }
+
+            /* ── Debug tab ── */
+            #tab-debug {
+                flex-direction: column;
+                padding: 0;
+                font-family: "Courier New", Consolas, monospace;
+                font-size: 11px;
+                color: #c9d1d9;
+                overflow: hidden;
+            }
+            .dbg-main {
+                display: flex;
+                flex-direction: column;
+                flex: 1;
+                min-width: 0;
+                overflow: hidden;
+            }
+            .dbg-toolbar {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                padding: 4px 8px;
+                background: #161b22;
+                border-bottom: 1px solid #30363d;
+                flex-shrink: 0;
+                flex-wrap: wrap;
+            }
+            .dbg-btn {
+                background: #21262d;
+                border: 1px solid #30363d;
+                color: #c9d1d9;
+                padding: 3px 10px;
+                cursor: pointer;
+                font-size: 11px;
+                font-family: inherit;
+                border-radius: 3px;
+            }
+            .dbg-btn:hover {
+                background: #2d333b;
+                border-color: #58a6ff;
+            }
+            .dbg-btn:active {
+                background: #161b22;
+            }
+            .dbg-btn.dbg-pause {
+                color: #f85149;
+            }
+            .dbg-btn.dbg-resume {
+                color: #3fb950;
+            }
+            .dbg-btn.dbg-step {
+                color: #d2a8ff;
+            }
+            .dbg-status-text {
+                color: #8b949e;
+                font-size: 11px;
+            }
+            .dbg-status-text.running {
+                color: #3fb950;
+            }
+            .dbg-status-text.halted {
+                color: #f85149;
+            }
+            /* Sub-tabs inside debug */
+            .dbg-subtabs {
+                display: flex;
+                gap: 0;
+                background: #161b22;
+                border-bottom: 1px solid #30363d;
+                flex-shrink: 0;
+            }
+            .dbg-subtab {
+                padding: 5px 14px;
+                background: none;
+                border: none;
+                border-bottom: 2px solid transparent;
+                color: #8b949e;
+                font-size: 11px;
+                font-family: inherit;
+                cursor: pointer;
+            }
+            .dbg-subtab:hover {
+                color: #e6edf3;
+            }
+            .dbg-subtab.active {
+                color: #58a6ff;
+                border-bottom-color: #58a6ff;
+            }
+            .dbg-subpanel {
+                display: none;
+                flex: 1;
+                min-height: 0;
+                overflow: hidden;
+            }
+            .dbg-subpanel.active {
+                display: flex;
+                flex-direction: column;
+            }
+            /* Panels */
+            .dbg-panel-hdr {
+                background: #161b22;
+                border-bottom: 1px solid #30363d;
+                padding: 3px 6px;
+                font-size: 10px;
+                color: #6e7681;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+                flex-shrink: 0;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
+            .dbg-panel-body {
+                padding: 4px 6px;
+                margin: 0;
+                white-space: pre;
+                font-family: inherit;
+                font-size: inherit;
+                color: #c9d1d9;
+                line-height: 1.4;
+                overflow-y: auto;
+                flex: 1;
+                min-height: 0;
+            }
+            /* Log sub-tab */
+            .dbg-log-body {
+                color: #8b949e;
+                font-size: 10px;
+            }
+            /* Debug sub-tab: three columns */
+            .dbg-debug-cols {
+                display: flex;
+                flex: 1;
+                min-height: 0;
+                overflow: hidden;
+            }
+            .dbg-debug-col {
+                display: flex;
+                flex-direction: column;
+                min-width: 0;
+                min-height: 0;
+                border-right: 1px solid #30363d;
+                overflow: hidden;
+            }
+            .dbg-debug-col:last-child {
+                border-right: none;
+            }
+            .dbg-col-regs {
+                width: 280px;
+                flex-shrink: 0;
+                overflow-y: auto;
+            }
+            .dbg-col-ctrl {
+                width: 220px;
+                flex-shrink: 0;
+            }
+            .dbg-col-disasm {
+                flex: 1;
+            }
+            .dbg-mem-scroll {
+                overflow-y: auto;
+                max-height: calc(1.4em * 30);
+                min-height: 0;
+            }
+            .dbg-bp-body {
+                flex: 0 0 auto;
+                padding: 0 6px 4px;
+            }
+            /* Breakpoint widgets */
+            .dbg-bp-add {
+                display: flex;
+                gap: 4px;
+                padding: 2px 0;
+            }
+            .dbg-bp-add input {
+                flex: 1;
+                background: #161b22;
+                border: 1px solid #30363d;
+                color: #c9d1d9;
+                padding: 2px 4px;
+                font-family: inherit;
+                font-size: 10px;
+                border-radius: 2px;
+                outline: none;
+            }
+            .dbg-bp-add input:focus {
+                border-color: #58a6ff;
+            }
+            .dbg-bp-row {
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                padding: 1px 0;
+            }
+            .dbg-bp-row .bp-addr {
+                color: #79c0ff;
+                flex: 1;
+            }
+            .dbg-bp-row .bp-del {
+                background: none;
+                border: none;
+                color: #f85149;
+                cursor: pointer;
+                font-size: 12px;
+                padding: 0 2px;
+            }
+            /* Memory header input */
+            .dbg-hdr-input {
+                background: #0d1117;
+                border: 1px solid #30363d;
+                color: #c9d1d9;
+                padding: 1px 4px;
+                font-family: inherit;
+                font-size: 10px;
+                border-radius: 2px;
+                width: 60px;
+                outline: none;
+            }
+            .dbg-hdr-input:focus {
+                border-color: #58a6ff;
+            }
+            .dbg-hdr-btn {
+                font-size: 9px;
+                padding: 1px 6px;
+            }
+            /* Disassembly PC highlight */
+            .dbg-disasm-pc {
+                background: #1c2128;
+                color: #f0c040;
+                display: block;
+            }
+            /* Micro sub-tab */
+            .dbg-micro-grid {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 0;
+                flex: 1;
+                min-height: 0;
+                overflow: auto;
+            }
+            .dbg-micro-section {
+                padding: 4px 6px;
+                border-bottom: 1px solid #21262d;
+                border-right: 1px solid #21262d;
+            }
+            .dbg-micro-section:nth-child(even) {
+                border-right: none;
+            }
+            .dbg-micro-lbl {
+                color: #6e7681;
+                font-size: 10px;
+                text-transform: uppercase;
+                margin-bottom: 2px;
+            }
+            .dbg-micro-val {
+                white-space: pre;
+                line-height: 1.4;
+            }
+
+            /* ── Logic Analyzer tab ── */
+            #tab-la {
+                flex-direction: column;
+                overflow: hidden;
+                font-family: "Courier New", Consolas, monospace;
+                font-size: 11px;
+                color: #c9d1d9;
+            }
+            .la-cols {
+                display: flex;
+                flex: 1;
+                min-height: 0;
+                overflow: hidden;
+            }
+            .la-col {
+                display: flex;
+                flex-direction: column;
+                width: 280px;
+                flex-shrink: 0;
+                min-width: 120px;
+                max-height: calc(1.4em * 30);
+                border-right: 1px solid #21262d;
+                overflow: hidden;
+            }
+            .la-col:last-child {
+                border-right: none;
+                flex: 1;
+                width: auto;
+                resize: none;
+            }
+            .la-col-hdr {
+                background: #161b22;
+                border-bottom: 1px solid #30363d;
+                padding: 3px 6px;
+                font-size: 10px;
+                color: #6e7681;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+                flex-shrink: 0;
+            }
+            .la-siglist {
+                overflow-y: auto;
+                padding: 2px 0;
+            }
+            .la-col:first-child .la-siglist {
+                flex: 1;
+            }
+            .la-sig-row {
+                display: flex;
+                align-items: center;
+                padding: 1px 4px;
+                gap: 4px;
+            }
+            .la-sig-row:hover {
+                background: #1c2128;
+            }
+            .la-sig-btn {
+                background: #21262d;
+                border: 1px solid #30363d;
+                color: #c9d1d9;
+                width: 18px;
+                height: 18px;
+                cursor: pointer;
+                font-size: 12px;
+                line-height: 1;
+                border-radius: 2px;
+                flex-shrink: 0;
+                padding: 0;
+                text-align: center;
+            }
+            .la-sig-btn:hover {
+                background: #2d333b;
+                border-color: #58a6ff;
+            }
+            .la-sig-name {
+                flex: 1;
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                color: #79c0ff;
+            }
+            .la-sig-desc {
+                color: #484f58;
+                font-size: 10px;
+                white-space: nowrap;
+            }
+            .la-cfg {
+                display: flex;
+                flex-direction: column;
+                gap: 5px;
+                padding: 6px 8px;
+                background: #0d1117;
+                flex-shrink: 0;
+                border-top: 1px solid #30363d;
+            }
+            .la-cfg-row {
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                flex-wrap: wrap;
+            }
+            .la-cfg-lbl {
+                color: #6e7681;
+                font-size: 10px;
+                min-width: 38px;
+            }
+            .la-input {
+                background: #161b22;
+                border: 1px solid #30363d;
+                color: #c9d1d9;
+                padding: 2px 4px;
+                font-family: inherit;
+                font-size: 10px;
+                border-radius: 2px;
+                outline: none;
+                flex: 1;
+                min-width: 50px;
+            }
+            .la-input:focus {
+                border-color: #58a6ff;
+            }
+            .la-btn {
+                background: #21262d;
+                border: 1px solid #30363d;
+                color: #c9d1d9;
+                padding: 2px 8px;
+                cursor: pointer;
+                font-size: 10px;
+                font-family: inherit;
+                border-radius: 2px;
+            }
+            .la-btn:hover {
+                background: #2d333b;
+                border-color: #58a6ff;
+            }
+            .la-btn.la-arm {
+                color: #3fb950;
+                border-color: #3fb950;
+            }
+            .la-btn.la-disarm {
+                color: #f85149;
+            }
+            #la-status {
+                font-size: 10px;
+                color: #6e7681;
+            }
+            #la-status.armed {
+                color: #f0c040;
+            }
+            #la-status.capturing {
+                color: #3fb950;
+            }
+            #la-status.done {
+                color: #79c0ff;
+            }
+            .la-data-wrap {
+                flex: 1;
+                overflow: auto;
+                min-height: 0;
+            }
+            #la-table {
+                border-collapse: collapse;
+                font-size: 10px;
+                min-width: 100%;
+            }
+            #la-table th {
+                background: #161b22;
+                color: #6e7681;
+                font-weight: normal;
+                text-align: right;
+                padding: 2px 6px;
+                border-bottom: 1px solid #30363d;
+                position: sticky;
+                top: 0;
+                white-space: nowrap;
+            }
+            #la-table th:first-child {
+                text-align: left;
+                color: #484f58;
+            }
+            #la-table td {
+                padding: 1px 6px;
+                text-align: right;
+                border-bottom: 1px solid #21262d;
+                color: #79c0ff;
+                font-variant-numeric: tabular-nums;
+                white-space: nowrap;
+                position: relative;
+            }
+            #la-table td[data-bin]:hover::after {
+                content: attr(data-bin);
+                position: absolute;
+                bottom: 100%;
+                left: 50%;
+                transform: translateX(-50%);
+                background: #1c2128;
+                color: #8b949e;
+                border: 1px solid #30363d;
+                padding: 2px 6px;
+                border-radius: 3px;
+                font-size: 10px;
+                white-space: nowrap;
+                z-index: 10;
+                pointer-events: none;
+            }
+            #la-table td:first-child {
+                text-align: left;
+                color: #484f58;
+            }
+            #la-table tr:hover td {
+                background: #1c2128;
+            }
+
+            /* Demo selector + sound checkbox */
+            #demo-select {
+                background: none;
+                border: none;
+                border-bottom: 2px solid transparent;
+                color: #8b949e;
+                font-size: 0.8rem;
+                cursor: pointer;
+                padding: 7px 8px;
+                outline: none;
+            }
+            #demo-select:hover {
+                color: #e6edf3;
+            }
+            #demo-select option {
+                background: #161b22;
+                color: #e6edf3;
+            }
+            #sound-label {
+                display: flex;
+                align-items: center;
+                gap: 5px;
+                padding: 7px 14px;
+                color: #8b949e;
+                font-size: 0.8rem;
+                cursor: pointer;
+                user-select: none;
+            }
+            #sound-label:hover {
+                color: #e6edf3;
+            }
+            #sound-label input {
+                cursor: pointer;
+            }
+
+            /* Loading overlay */
+            .loading-overlay {
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, 0.92);
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                gap: 14px;
+                z-index: 200;
+                font-size: 0.9rem;
+                color: #8b949e;
+            }
+            .spinner {
+                width: 32px;
+                height: 32px;
+                border: 3px solid #30363d;
+                border-top-color: #58a6ff;
+                border-radius: 50%;
+                animation: spin 0.8s linear infinite;
+            }
+            @keyframes spin {
+                to {
+                    transform: rotate(360deg);
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="loading-overlay" id="loading">
+            <div class="spinner"></div>
+            <div>Loading KD11-EA microcode…</div>
+        </div>
+
+        <!-- ── Front panel ── -->
+        <div id="panel-wrap">
+            <img
+                id="panel-img"
+                src="assets/panel.jpg"
+                alt="PDP-11/34 front panel"
+                draggable="false"
+            />
+            <div id="panel-overlay">
+                <!-- Power button ON state overlay -->
+                <img id="power-btn-on" src="assets/button.png" alt="" />
+                <!-- Power click zone -->
+                <div id="power-zone"></div>
+                <!-- 7-segment display -->
+                <div id="seg-display">
+                    <div class="seg-cell">
+                        <span class="seg-ghost">888888</span>
+                        <span class="seg-value off" id="seg-addr">000000</span>
+                    </div>
+                </div>
+                <!-- LEDs and buttons injected by JS -->
+            </div>
+        </div>
+
+        <!-- ── Terminal + tabs ── -->
+        <div id="bottom">
+            <div id="tabs">
+                <button class="tab-btn active" data-tab="console">VT100</button>
+                <button class="tab-btn" data-tab="debug">Debug</button>
+                <button class="tab-btn" data-tab="la">Logic Analyzer</button>
+                <button class="tab-btn" data-tab="docs">Usage</button>
+                <div style="flex: 1"></div>
+                <select id="demo-select">
+                    <option value="" disabled selected>&#9662; Programs</option>
+                    <option value="0">Default (ODT)</option>
+                    <option value="1">ATTN/11</option>
+                    <option value="2">Game of Life</option>
+                    <option value="3">RT11 V4</option>
+                    <option value="4">V6 UNIX</option>
+                    <option value="5">Xortran</option>
+                </select>
+                <label id="sound-label"
+                    ><input type="checkbox" id="sound-chk" checked />
+                    Sound</label
+                >
+            </div>
+
+            <div id="tab-console" class="tab-panel active">
+                <div id="terminal"></div>
+            </div>
+            <!-- ── Debug GUI tab ── -->
+            <div id="tab-debug" class="tab-panel">
+                <div class="dbg-main">
+                    <div class="dbg-subtabs">
+                        <button class="dbg-subtab active" data-dbgtab="log">
+                            Logs
+                        </button>
+                        <button class="dbg-subtab" data-dbgtab="debug">
+                            Debugger
+                        </button>
+                        <button class="dbg-subtab" data-dbgtab="mem">
+                            Memory
+                        </button>
+                        <button class="dbg-subtab" data-dbgtab="micro">
+                            Microsteps
+                        </button>
+                        <span
+                            id="dbg-time-txt"
+                            class="dbg-status-text"
+                            style="margin-left: auto; padding-right: 8px"
+                        ></span>
+                    </div>
+                    <!-- Log sub-tab -->
+                    <div class="dbg-subpanel active" id="dbg-sub-log">
+                        <pre
+                            class="dbg-panel-body dbg-log-body"
+                            id="dbg-log"
+                        ></pre>
+                    </div>
+                    <!-- Debugger sub-tab: 3 columns -->
+                    <div class="dbg-subpanel" id="dbg-sub-debug">
+                        <div class="dbg-toolbar">
+                            <button
+                                class="dbg-btn dbg-pause"
+                                id="dbg-pause-btn"
+                            >
+                                &#9646;&#9646;
+                            </button>
+                            <button
+                                class="dbg-btn dbg-resume"
+                                id="dbg-resume-btn"
+                            >
+                                &#9654;
+                            </button>
+                            <button class="dbg-btn dbg-step" id="dbg-step-btn">
+                                &#10145;
+                            </button>
+                            <span id="dbg-status-txt" class="dbg-status-text"
+                                >&#8212;</span
+                            >
+                        </div>
+                        <div class="dbg-debug-cols">
+                            <!-- Col 1: Registers + MMU -->
+                            <div class="dbg-debug-col dbg-col-regs">
+                                <div class="dbg-panel-hdr">REGISTERS</div>
+                                <pre
+                                    class="dbg-panel-body"
+                                    id="dbg-regs"
+                                    style="flex: none"
+                                ></pre>
+                                <div class="dbg-panel-hdr">MMU</div>
+                                <pre class="dbg-panel-body" id="dbg-mmu"></pre>
+                            </div>
+                            <!-- Col 2: Disasm controls + Breakpoints -->
+                            <div class="dbg-debug-col dbg-col-ctrl">
+                                <div class="dbg-panel-hdr">DISASSEMBLY</div>
+                                <div
+                                    class="dbg-panel-body"
+                                    style="flex: 0 0 auto; padding: 4px 6px"
+                                >
+                                    <div class="dbg-bp-add">
+                                        <input
+                                            id="dbg-disasm-base"
+                                            type="text"
+                                            placeholder="base addr"
+                                            spellcheck="false"
+                                        />
+                                        <button
+                                            class="dbg-btn"
+                                            id="dbg-disasm-pc-btn"
+                                            title="Use current PC"
+                                        >
+                                            PC
+                                        </button>
+                                        <button
+                                            class="dbg-btn"
+                                            id="dbg-disasm-go-btn"
+                                        >
+                                            Go
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="dbg-panel-hdr">BREAKPOINTS</div>
+                                <div
+                                    class="dbg-panel-body dbg-bp-body"
+                                    id="dbg-bp"
+                                >
+                                    <div class="dbg-bp-add">
+                                        <input
+                                            id="dbg-bp-input"
+                                            type="text"
+                                            placeholder="octal addr"
+                                            spellcheck="false"
+                                        />
+                                        <button
+                                            class="dbg-btn"
+                                            id="dbg-bp-add-btn"
+                                        >
+                                            +
+                                        </button>
+                                    </div>
+                                    <div id="dbg-bp-list"></div>
+                                </div>
+                            </div>
+                            <!-- Col 3: Disassembly listing -->
+                            <div class="dbg-debug-col dbg-col-disasm">
+                                <div class="dbg-panel-hdr">LISTING</div>
+                                <pre
+                                    class="dbg-panel-body"
+                                    id="dbg-disasm"
+                                ></pre>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Memory sub-tab -->
+                    <div class="dbg-subpanel" id="dbg-sub-mem">
+                        <div class="dbg-panel-hdr">MEMORY</div>
+                        <pre
+                            class="dbg-panel-body dbg-mem-scroll"
+                            id="dbg-mem"
+                        ></pre>
+                    </div>
+                    <!-- Micro sub-tab -->
+                    <div class="dbg-subpanel" id="dbg-sub-micro">
+                        <div class="dbg-toolbar">
+                            <button class="dbg-btn dbg-step" id="dbg-ustep-btn">
+                                &#10145; &#956;Step
+                            </button>
+                            <span
+                                class="dbg-status-text"
+                                id="dbg-mpc-txt"
+                            ></span>
+                        </div>
+                        <div class="dbg-micro-grid">
+                            <div class="dbg-micro-section">
+                                <div class="dbg-micro-lbl">Sequencer</div>
+                                <pre
+                                    class="dbg-micro-val"
+                                    id="dbg-micro-seq"
+                                ></pre>
+                            </div>
+                            <div class="dbg-micro-section">
+                                <div class="dbg-micro-lbl">ALU</div>
+                                <pre
+                                    class="dbg-micro-val"
+                                    id="dbg-micro-alu"
+                                ></pre>
+                            </div>
+                            <div class="dbg-micro-section">
+                                <div class="dbg-micro-lbl">Bus</div>
+                                <pre
+                                    class="dbg-micro-val"
+                                    id="dbg-micro-bus"
+                                ></pre>
+                            </div>
+                            <div class="dbg-micro-section">
+                                <div class="dbg-micro-lbl">Shift Registers</div>
+                                <pre
+                                    class="dbg-micro-val"
+                                    id="dbg-micro-shift"
+                                ></pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── Logic Analyzer tab ── -->
+            <div id="tab-la" class="tab-panel">
+                <div class="la-cols">
+                    <!-- Col 1: Signal catalog -->
+                    <div class="la-col">
+                        <div class="la-col-hdr">Available signals</div>
+                        <div class="la-siglist" id="la-catalog"></div>
+                    </div>
+                    <!-- Col 2: Captured signals + config -->
+                    <div class="la-col">
+                        <div class="la-col-hdr">Captured signals</div>
+                        <div class="la-siglist" id="la-selected"></div>
+                        <div class="la-cfg">
+                            <div class="la-cfg-row">
+                                <span class="la-cfg-lbl">Trigger</span>
+                                <input
+                                    class="la-input"
+                                    id="la-trig-sig"
+                                    type="text"
+                                    placeholder="signal name"
+                                    spellcheck="false"
+                                />
+                            </div>
+                            <div class="la-cfg-row">
+                                <span class="la-cfg-lbl">Value</span>
+                                <input
+                                    class="la-input"
+                                    id="la-trig-val"
+                                    type="text"
+                                    value="0"
+                                    spellcheck="false"
+                                />
+                            </div>
+                            <div class="la-cfg-row">
+                                <span class="la-cfg-lbl">Mask</span>
+                                <input
+                                    class="la-input"
+                                    id="la-trig-mask"
+                                    type="text"
+                                    value="177777"
+                                    spellcheck="false"
+                                />
+                            </div>
+                            <div class="la-cfg-row">
+                                <span class="la-cfg-lbl">Depth</span>
+                                <input
+                                    class="la-input"
+                                    id="la-depth"
+                                    type="text"
+                                    value="512"
+                                    spellcheck="false"
+                                />
+                            </div>
+                            <div class="la-cfg-row">
+                                <span class="la-cfg-lbl">Rate</span>
+                                <input
+                                    class="la-input"
+                                    id="la-rate"
+                                    type="text"
+                                    value="1"
+                                    spellcheck="false"
+                                />
+                            </div>
+                            <div class="la-cfg-row">
+                                <span class="la-cfg-lbl">Pos %</span>
+                                <input
+                                    class="la-input"
+                                    id="la-pos"
+                                    type="text"
+                                    value="50"
+                                    spellcheck="false"
+                                />
+                            </div>
+                            <div class="la-cfg-row">
+                                <button class="la-btn la-arm" id="la-arm-btn">
+                                    Arm
+                                </button>
+                                <button
+                                    class="la-btn la-disarm"
+                                    id="la-disarm-btn"
+                                >
+                                    Disarm
+                                </button>
+                                <span id="la-status">IDLE</span>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Col 3: Captured data -->
+                    <div class="la-col">
+                        <div class="la-col-hdr">Analysis</div>
+                        <div class="la-data-wrap">
+                            <table id="la-table">
+                                <thead>
+                                    <tr>
+                                        <th>ns</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── Docs tab ── -->
+            <div id="tab-docs" class="tab-panel">
+                <div class="docs-layout">
+                    <nav class="docs-nav">
+                        <button class="docs-nav-btn active" data-doctab="impl">
+                            Programs
+                        </button>
+                        <button class="docs-nav-btn" data-doctab="about">
+                            About
+                        </button>
+                    </nav>
+                    <div class="docs-content">
+                        <div id="doc-about" class="docs-page">
+                            <h2>ll/34</h2>
+                            <p>
+                                ll/34 is a cycle-accurate, circuit-level
+                                emulator for the PDP-11/34A (1976). It runs the original ROM tables,
+                                either dumped or reconstructed from the schematics,
+                                and is essentially a direct translation of the KD11-EA engineering drawings.
+
+                            </p>
+                            <br />
+                            <p>
+                                Read more at
+                                <a
+                                    href="https://github.com/dbrll/ll-34"
+                                    target="_blank"
+                                    >https://github.com/dbrll/ll-34</a
+                                >
+                            </p>
+                            <p>Damien Boureille, 2026. MIT License</p>
+                            <p></p>
+                            <p>
+                                <br/>
+                                Fun facts:
+                            <p> - The power switch on the front panel
+                                is silent. The loud clicking sound comes from
+                                the relay in the PSU. </p>
+                            <p>
+                                - The CPU is cooled by two
+                                large AC fans running at mains voltage. They are
+                                about as loud as a vacuum cleaner.
+                            </p>
+                            <p>
+                                - The KD11-EA CPU uses a remarkably simple design.
+                                It is roughly a third of the complexity of an Intel 8086
+                                in transistor count, yet achieves comparable performance.
+                                Just 512 words of microcode control the CPU, and open-collector
+                                ROMs combine their outputs by wire-OR to decode instructions
+                                without arbitration logic.
+                            </p>
+                            </p>
+                        </div>
+                        <div id="doc-impl" class="docs-page active">
+                            <h2>Programs</h2>
+
+                            <h3>Default (ODT)</h3>
+                            <p>
+                                ODT (Online Debugging Tool) is the console
+                                monitor built into the M9301-YF boot ROM (what
+                                would be called a BIOS or EFI nowadays). It
+                                allows loading, running, and debugging code from the
+                                terminal.
+                            </p>
+                            <p>ODT consists of four commands:</p>
+
+                            <ul>
+                                <li>
+                                    <code>L XXXXXX</code> Load address (in octal)
+                                    ODT uses the "space" key instead of "Enter".
+                                </li>
+                                <li>
+                                    <code>E</code> Examine word at current
+                                    address (auto-increments)
+                                </li>
+                                <li>
+                                    <code>D XXXXXX</code> Deposit word at
+                                    current address (auto-increments)
+                                </li>
+                                <li>
+                                    <code>S</code> Start execution at current
+                                    address
+                                </li>
+                            </ul>
+                            <p>
+                                <br />
+                                Example:
+                            <p><code>L 1000</code> [space], then <code>E</code> to read address <code>001000</code>. </p>
+                            <p>Type <code>D 777</code>, then [space] to write <code>000777</code> there. </p>
+                            <p> Finally, <code>S</code> [space] to start execution from that address.</p>
+
+                            </p>
+                            <br/>
+                            <p>Note: ODT may seem spartan, but the only memory it requires to run is the CPU registers!</p>
+
+                            <h3>ATTN/11</h3>
+                            <p>
+                                A small Transformer (1216 parameters) for the
+                                PDP-11/34, written in baremetal assembly. Training takes about 5:30mn. Read
+                                more at
+                                <a
+                                    href="https://github.com/dbrll/ATTN-11/"
+                                    target="_blank"
+                                >
+                                    github.com/dbrll/ATTN-11/
+                                </a>
+                            </p>
+
+                            <h3>Game of Life</h3>
+                            <p>
+                                Conway&rsquo;s Game of Life, loaded from an
+                                ASCII object file. Runs continuously in the console.
+                            </p>
+
+                            <h3>RT-11 V4</h3>
+                            <p>
+                                RT-11 SJ V04, Digital&rsquo;s single-job
+                                real-time operating system. Boots from a virtual
+                                RK05 disk. It uses TOPS-10 commands, like OS-8,
+                                CP/M or MS-DOS:
+                                <code>cd</code>, <code>dir</code>,
+                                <code>type</code>. Run a program with
+                                <code>RUN</code> followed by the program name.
+                                Programs use a <code>SAV</code> extension.
+                            </p>
+                            <p>
+                                The disk image includes the original
+                                <strong>Tetris</strong> game written for the
+                                Elektronika 60, a soviet PDP-11/03 clone. Type
+                                <code>RUN TETRIS</code> to play. Controls:
+                                <code>7</code>/<code>9</code> left/right,
+                                <code>8</code> rotate, <code>4</code> speed up,
+                                <code>5</code> drop.</p>
+                            <p>Note: the game runs roughly
+                                2&times; faster than intended since the
+                                PDP-11/34 is faster than the original target
+                                machine.
+                            </p>
+
+                            <h3>V6 UNIX</h3>
+                            <p>
+                                Sixth Edition UNIX (1975), the first version of
+                                UNIX to be widely distributed outside Bell Labs.
+                            </p>
+                            <p>
+                                Type <code>rkunix</code> at the RK05 disk drive bootloader (<code>@</code> prompt).
+                                Log in as <code>ken</code> or <code>root</code> (no
+                                password). On V6, <code>cd</code> is
+                                <code>chdir</code>, and <code>SIGINT</code> uses
+                                <code>DEL</code> instead of <code>^C</code>.
+                            </p>
+
+                            <h3>Xortran</h3>
+                            <p>
+                                A small neural-network written in
+                                Fortran IV under RT-11 V3. It uses
+                                backpropagation to train a multilayer perceptron
+                                on the XOR problem.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── panel.js must come first (defines PANEL_*, KEY, BUTTONS, LEDS, AUDIO) ── -->
+        <script src="panel.js"></script>
+
+        <script>
+            /* ================================================================
+             * xterm.js
+             * ================================================================ */
+            const term = new Terminal({
+                cols: 80,
+                rows: 25,
+                fontFamily: '"VT220", "Courier New", monospace',
+                fontSize: 18,
+                theme: {
+                    background: "#0d1117",
+                    foreground: "#00ff00",
+                    cursor: "#00ff00",
+                    black: "#0d1117",
+                    brightBlack: "#6e7681",
+                },
+                cursorBlink: false,
+                scrollback: 2000,
+            });
+            const fitAddon = new FitAddon.FitAddon();
+            term.loadAddon(fitAddon);
+            term.open(document.getElementById("terminal"));
+            window.addEventListener("resize", () => {
+                fitAddon.fit();
+                buildPanel();
+            });
+
+            /* ================================================================
+             * Tab switching
+             * ================================================================ */
+            document.querySelectorAll(".tab-btn[data-tab]").forEach((btn) => {
+                btn.addEventListener("click", () => {
+                    document
+                        .querySelectorAll(".tab-btn[data-tab]")
+                        .forEach((b) => b.classList.remove("active"));
+                    document
+                        .querySelectorAll(".tab-panel")
+                        .forEach((p) => p.classList.remove("active"));
+                    btn.classList.add("active");
+                    document
+                        .getElementById("tab-" + btn.dataset.tab)
+                        .classList.add("active");
+                    activeTab = btn.dataset.tab;
+                    if (activeTab === "console") {
+                        fitAddon.fit();
+                        term.focus();
+                    }
+                    if (activeTab === "debug") {
+                        dbgOnEnter();
+                    }
+                    if (activeTab === "la") {
+                        laOnEnter();
+                    }
+                });
+            });
+
+            /* Docs vertical sub-tab switching */
+            document
+                .querySelectorAll(".docs-nav-btn[data-doctab]")
+                .forEach((btn) => {
+                    btn.addEventListener("click", () => {
+                        document
+                            .querySelectorAll(".docs-nav-btn")
+                            .forEach((b) => b.classList.remove("active"));
+                        document
+                            .querySelectorAll(".docs-page")
+                            .forEach((p) => p.classList.remove("active"));
+                        btn.classList.add("active");
+                        document
+                            .getElementById("doc-" + btn.dataset.doctab)
+                            .classList.add("active");
+                    });
+                });
+
+            /* Debug sub-tab switching */
+            let activeDbgSubtab = "log";
+            document
+                .querySelectorAll(".dbg-subtab[data-dbgtab]")
+                .forEach((btn) => {
+                    btn.addEventListener("click", () => {
+                        document
+                            .querySelectorAll(".dbg-subtab")
+                            .forEach((b) => b.classList.remove("active"));
+                        document
+                            .querySelectorAll(".dbg-subpanel")
+                            .forEach((p) => p.classList.remove("active"));
+                        btn.classList.add("active");
+                        const t = btn.dataset.dbgtab;
+                        document
+                            .getElementById("dbg-sub-" + t)
+                            .classList.add("active");
+                        activeDbgSubtab = t;
+                        if (t === "debug") {
+                            dbgRefreshDisasm();
+                            dbgRefreshBpList();
+                        }
+                        if (t === "mem") {
+                            dbgRefreshMem();
+                        }
+                        if (t === "micro") {
+                            dbgRefreshMicro();
+                        }
+                    });
+                });
+
+            /* ================================================================
+             * Panel layout: convert px coords → CSS % and inject DOM elements
+             * ================================================================ */
+            function pct(px, total) {
+                return ((px / total) * 100).toFixed(4) + "%";
+            }
+
+            function buildPanel() {
+                const overlay = document.getElementById("panel-overlay");
+                const pw = PANEL_IMG_W,
+                    ph = PANEL_IMG_H;
+
+                /* Power button ON overlay */
+                const pOn = document.getElementById("power-btn-on");
+                pOn.style.left = pct(POWER_BTN.x, pw);
+                pOn.style.top = pct(POWER_BTN.y, ph);
+                pOn.style.width = pct(POWER_BTN.w, pw);
+                pOn.style.height = pct(POWER_BTN.h, ph);
+
+                /* Power click zone (same position) */
+                const pz = document.getElementById("power-zone");
+                pz.style.left = pct(POWER_BTN.x + POWER_BTN.w * 0.1, pw);
+                pz.style.top = pct(POWER_BTN.y + POWER_BTN.h * 0.1, ph);
+                pz.style.width = pct(POWER_BTN.w * 0.8, pw);
+                pz.style.height = pct(POWER_BTN.h * 0.8, ph);
+
+                /* 7-segment display */
+                const seg = document.getElementById("seg-display");
+                seg.style.left = pct(DISPLAY.x, pw);
+                seg.style.top = pct(DISPLAY.y, ph);
+                seg.style.width = pct(DISPLAY.w, pw);
+                seg.style.height = pct(DISPLAY.h, ph);
+                /* Font size relative to display height — single row, fill ~80% */
+                const dispH =
+                    document.getElementById("panel-img").clientHeight *
+                    (DISPLAY.h / ph);
+                seg.style.fontSize = (dispH * 0.78).toFixed(1) + "px";
+
+                /* Remove previous dynamic elements */
+                overlay
+                    .querySelectorAll(".led-dot, .panel-btn")
+                    .forEach((e) => e.remove());
+
+                /* LEDs */
+                for (const [name, cfg] of Object.entries(LEDS)) {
+                    const d = document.createElement("div");
+                    d.className = "led-dot";
+                    d.id = "led-" + name;
+                    const diam = pct(cfg.r * 2, pw);
+                    d.style.left = pct(cfg.x - cfg.r, pw);
+                    d.style.top = pct(cfg.y - cfg.r, ph);
+                    d.style.width = diam;
+                    d.style.height = pct(cfg.r * 2, ph);
+                    overlay.appendChild(d);
+                }
+
+                /* Buttons */
+                for (const btn of BUTTONS) {
+                    const b = document.createElement("button");
+                    b.className =
+                        "panel-btn" + (PANEL_DEBUG ? " debug-vis" : "");
+                    b.id = "pbtn-" + btn.id;
+                    b.title = btn.label;
+                    b.style.left = pct(btn.x, pw);
+                    b.style.top = pct(btn.y, ph);
+                    b.style.width = pct(btn.w, pw);
+                    b.style.height = pct(btn.h, ph);
+                    b.dataset.key = btn.key;
+                    overlay.appendChild(b);
+                }
+
+                /* Debug: click anywhere on panel to show pixel coordinates */
+                if (PANEL_DEBUG) {
+                    overlay.addEventListener("click", (e) => {
+                        const rect = overlay.getBoundingClientRect();
+                        const x = Math.round(
+                            ((e.clientX - rect.left) / rect.width) *
+                                PANEL_IMG_W,
+                        );
+                        const y = Math.round(
+                            ((e.clientY - rect.top) / rect.height) *
+                                PANEL_IMG_H,
+                        );
+                        console.log(`Panel click: x=${x}, y=${y}`);
+                    });
+                }
+            }
+
+            /* ================================================================
+             * Audio engine
+             * ================================================================ */
+            let audioCtx = null;
+            let clickBuffer = null;
+            let powerBuffer = null;
+            let powerIntroNode = null;
+            let powerLoopNode = null;
+            let powerLoopStartTime =
+                Infinity; /* absolute time when loop starts */
+            let keepAliveOsc =
+                null; /* oscillateur permanent anti-sleep hardware */
+            let masterGain =
+                null; /* master gain node — muted by Sound checkbox */
+            let soundEnabled = true;
+
+            function ensureAudioCtx() {
+                if (!audioCtx) {
+                    audioCtx = new (
+                        window.AudioContext || window.webkitAudioContext
+                    )();
+                }
+                return audioCtx;
+            }
+
+            function getMasterOut() {
+                /* Master output node — all user audio routes through this.
+                 * Keep-alive bypasses it (always active to prevent hardware sleep). */
+                if (!masterGain && audioCtx) {
+                    masterGain = audioCtx.createGain();
+                    masterGain.gain.value = soundEnabled ? 1.0 : 0.0;
+                    masterGain.connect(audioCtx.destination);
+                }
+                return masterGain || audioCtx.destination;
+            }
+
+            function setSoundEnabled(on) {
+                soundEnabled = on;
+                if (masterGain && audioCtx) {
+                    masterGain.gain.cancelScheduledValues(audioCtx.currentTime);
+                    masterGain.gain.setValueAtTime(
+                        masterGain.gain.value,
+                        audioCtx.currentTime,
+                    );
+                    masterGain.gain.linearRampToValueAtTime(
+                        on ? 1.0 : 0.0,
+                        audioCtx.currentTime + 0.5,
+                    );
+                }
+            }
+
+            function startKeepAlive() {
+                /* Permanent oscillator at −80 dB (gain 0.0001): completely inaudible,
+                 * but prevents macOS CoreAudio from sleeping the hardware between sounds.
+                 * Without this, each sound triggers a ~1 s OS wake-up delay. */
+                if (keepAliveOsc || !audioCtx) return;
+                keepAliveOsc = audioCtx.createOscillator();
+                const g = audioCtx.createGain();
+                g.gain.value = 0.0001; /* −80 dB */
+                keepAliveOsc.connect(g);
+                g.connect(audioCtx.destination);
+                keepAliveOsc.start();
+            }
+
+            async function prewarmAudio() {
+                /* Play 1 second of run.mp3 at −60 dB (0.001, inaudible) to force
+                 * macOS audio pipeline initialization, then start keep-alive.
+                 * Called on first user gesture (click/keydown), NOT at page load —
+                 * AudioContext must be created within a gesture to avoid browser
+                 * autoplay blocking. */
+                if (!powerBuffer) return;
+                ensureAudioCtx();
+                try {
+                    await audioCtx.resume();
+                } catch (_) {}
+                if (audioCtx.state !== "running") return;
+
+                startKeepAlive(); /* start keep-alive immediately */
+
+                const warmGain = audioCtx.createGain();
+                warmGain.gain.value = 0.001; /* −60 dB : inaudible en pratique */
+                warmGain.connect(
+                    audioCtx.destination,
+                ); /* bypass masterGain : toujours actif */
+                const src = audioCtx.createBufferSource();
+                src.buffer = powerBuffer;
+                src.connect(warmGain);
+                src.start(0, 0, 1.0); /* 1 second from start of run.mp3 */
+                src.onended = () => warmGain.disconnect();
+            }
+
+            /* First user gesture: create AudioContext and warm up hardware.
+             * Avoids the ~1s CoreAudio wake-up delay at power click time. */
+            let audioWarmedUp = false;
+            function warmAudioOnGesture() {
+                if (audioWarmedUp) return;
+                audioWarmedUp = true;
+                document.removeEventListener("click", warmAudioOnGesture, true);
+                document.removeEventListener(
+                    "keydown",
+                    warmAudioOnGesture,
+                    true,
+                );
+                prewarmAudio();
+            }
+
+            async function initAudio() {
+                /* Pre-decode with OfflineAudioContext — no user gesture needed,
+                 * no autoplay policy, no suspended state.
+                 * Decoded AudioBuffers are reused by the real context on click. */
+                let tmpCtx;
+                try {
+                    tmpCtx = new OfflineAudioContext(2, 44100, 44100);
+                } catch (_) {
+                    console.warn("[ll-34] OfflineAudioContext indisponible");
+                    return;
+                }
+
+                async function decode(url) {
+                    try {
+                        const resp = await fetch(url);
+                        if (!resp.ok) throw new Error(resp.status);
+                        return await tmpCtx.decodeAudioData(
+                            await resp.arrayBuffer(),
+                        );
+                    } catch (e) {
+                        console.warn("[ll-34] audio:", url, e.message);
+                        return null;
+                    }
+                }
+
+                [clickBuffer, powerBuffer] = await Promise.all([
+                    decode(AUDIO.keys.file),
+                    decode(AUDIO.power.file),
+                ]);
+
+                /* Register one-shot listener: first user gesture (click or keydown)
+                 * will create the AudioContext and warm up hardware.
+                 * Using capture=true to intercept before all other handlers. */
+                document.addEventListener("click", warmAudioOnGesture, true);
+                document.addEventListener("keydown", warmAudioOnGesture, true);
+            }
+
+            function playClick() {
+                if (!clickBuffer || !audioCtx) return;
+                const segs = AUDIO.keys.segments;
+                const seg = segs[Math.floor(Math.random() * segs.length)];
+                const src = audioCtx.createBufferSource();
+                src.buffer = clickBuffer;
+                src.connect(getMasterOut());
+                src.start(0, seg.start, seg.end - seg.start);
+            }
+
+            function startPowerAudio() {
+                if (!powerBuffer || !audioCtx) return;
+                const cfg = AUDIO.power;
+                const skip = cfg.skip || 0;
+                /* Play intro (skip → intro_end), skipping initial silence */
+                const intro = audioCtx.createBufferSource();
+                intro.buffer = powerBuffer;
+                intro.connect(getMasterOut());
+                const introLen = cfg.intro_end - skip;
+                intro.start(0, skip, introLen);
+                powerIntroNode = intro;
+                /* Schedule loop to start right after intro */
+                powerLoopStartTime = audioCtx.currentTime + introLen;
+                const loop = audioCtx.createBufferSource();
+                loop.buffer = powerBuffer;
+                loop.loop = true;
+                loop.loopStart = cfg.intro_end;
+                loop.loopEnd = cfg.loop_end;
+                loop.connect(getMasterOut());
+                loop.start(powerLoopStartTime, cfg.intro_end);
+                powerLoopNode = loop;
+            }
+
+            function stopPowerAudio() {
+                if (!powerBuffer || !audioCtx) return;
+                /* Stop intro */
+                if (powerIntroNode) {
+                    try {
+                        powerIntroNode.stop();
+                    } catch (_) {}
+                }
+                powerIntroNode = null;
+                /* Stop loop — if not yet started, disconnect() prevents phantom playback */
+                if (powerLoopNode) {
+                    if (audioCtx.currentTime >= powerLoopStartTime) {
+                        try {
+                            powerLoopNode.stop();
+                        } catch (_) {}
+                    } else {
+                        powerLoopNode.disconnect();
+                    }
+                    powerLoopNode = null;
+                }
+                powerLoopStartTime = Infinity;
+                /* Play outro (loop_end → end) */
+                const cfg = AUDIO.power;
+                const outro = audioCtx.createBufferSource();
+                outro.buffer = powerBuffer;
+                outro.connect(getMasterOut());
+                outro.start(0, cfg.loop_end);
+            }
+
+            /* ================================================================
+             * Power state
+             * ================================================================ */
+            let powered = false;
+
+            function doPowerOn() {
+                if (powered) return;
+                powered = true;
+                document
+                    .getElementById("power-btn-on")
+                    .classList.add("visible");
+                setDisplayOn(true);
+                startPowerAudio();
+                if (window._wasm_power_on) window._wasm_power_on();
+            }
+
+            function doPowerOff() {
+                if (!powered) return;
+                powered = false;
+                document
+                    .getElementById("power-btn-on")
+                    .classList.remove("visible");
+                setDisplayOn(false);
+                stopPowerAudio();
+                if (window._wasm_power_off) window._wasm_power_off();
+            }
+
+            function setDisplayOn(on) {
+                const el = document.getElementById("seg-addr");
+                if (el) el.classList.toggle("off", !on);
+            }
+
+            /* ================================================================
+             * Panel state polling (LEDs + display, called each RAF)
+             * ================================================================ */
+            function pollPanel() {
+                if (!window._wasm_get_leds) return;
+
+                /* Machine off: all LEDs off, no display update */
+                if (!powered) {
+                    setLed("run", false);
+                    setLed("bus_err", false);
+                    setLed("sr_disp", false);
+                    setLed("maint", false);
+                    setLed("dc_on", false);
+                    const cntrlBtn = document.getElementById("pbtn-cntrl");
+                    if (cntrlBtn) cntrlBtn.classList.remove("active");
+                    return;
+                }
+
+                const leds = window._wasm_get_leds();
+                const run = !!(leds & 1);
+                const err = !!(leds & 2);
+                const srDisp = !!(leds & 4);
+                const maint = !!(leds & 8);
+                const cntrl = !!(leds & 16);
+
+                setLed("run", run);
+                setLed("bus_err", err);
+                setLed("sr_disp", srDisp);
+                setLed("maint", maint);
+                setLed("dc_on", true);
+
+                /* Highlight CNTRL button when latched (sticky modifier) */
+                const cntrlBtn = document.getElementById("pbtn-cntrl");
+                if (cntrlBtn) cntrlBtn.classList.toggle("active", cntrl);
+
+                const addr = window._wasm_get_display_addr();
+                document.getElementById("seg-addr").textContent = toOct6(addr);
+            }
+
+            function setLed(name, on) {
+                const el = document.getElementById("led-" + name);
+                if (!el) return;
+                el.classList.toggle("on", !!on);
+            }
+
+            function toOct6(val) {
+                return val.toString(8).padStart(6, "0");
+            }
+
+            /* ================================================================
+             * VT52 to VT100 translator (xterm.js has no VT52 mode)
+             * ================================================================ */
+            let vt52Mode = false;
+            let vt52State = 0; /* 0=normal, 1=got ESC, 2=got ESC Y, 3=got ESC Y row */
+            let vt52Row = 0;
+            function vt52translate(raw) {
+                let out = "";
+                for (let i = 0; i < raw.length; i++) {
+                    const ch = raw.charCodeAt(i);
+                    switch (vt52State) {
+                        case 0 /* normal */:
+                            if (ch === 0x1b) vt52State = 1;
+                            else out += raw[i];
+                            break;
+                        case 1 /* got ESC */:
+                            switch (ch) {
+                                case 0x41:
+                                    out += "\x1b[A";
+                                    vt52State = 0;
+                                    break; /* A → cursor up */
+                                case 0x42:
+                                    out += "\x1b[B";
+                                    vt52State = 0;
+                                    break; /* B → cursor down */
+                                case 0x43:
+                                    out += "\x1b[C";
+                                    vt52State = 0;
+                                    break; /* C → cursor right */
+                                case 0x44:
+                                    out += "\x1b[D";
+                                    vt52State = 0;
+                                    break; /* D → cursor left */
+                                case 0x48:
+                                    out += "\x1b[H";
+                                    vt52State = 0;
+                                    break; /* H → cursor home */
+                                case 0x49:
+                                    out += "\x1bM";
+                                    vt52State = 0;
+                                    break; /* I → reverse LF */
+                                case 0x4a:
+                                    out += "\x1b[J";
+                                    vt52State = 0;
+                                    break; /* J → erase below */
+                                case 0x4b:
+                                    out += "\x1b[K";
+                                    vt52State = 0;
+                                    break; /* K → erase to EOL */
+                                case 0x59:
+                                    vt52State = 2;
+                                    break; /* Y → cursor addr */
+                                case 0x5a:
+                                    out += "\x1b[?6c";
+                                    vt52State = 0;
+                                    break; /* Z → identify */
+                                case 0x3d:
+                                    out += "\x1b=";
+                                    vt52State = 0;
+                                    break; /* = → alt keypad */
+                                case 0x3e:
+                                    out += "\x1b>";
+                                    vt52State = 0;
+                                    break; /* > → num keypad */
+                                case 0x46:
+                                    out += "\x1b(0";
+                                    vt52State = 0;
+                                    break; /* F → graphics on */
+                                case 0x47:
+                                    out += "\x1b(B";
+                                    vt52State = 0;
+                                    break; /* G → graphics off */
+                                default:
+                                    out += "\x1b" + raw[i];
+                                    vt52State = 0;
+                                    break;
+                            }
+                            break;
+                        case 2 /* got ESC Y — next byte is row+0x20 */:
+                            vt52Row = ch - 0x1f; /* 1-based for VT100 */
+                            vt52State = 3;
+                            break;
+                        case 3 /* got ESC Y row — next byte is col+0x20 */:
+                            out += "\x1b[" + vt52Row + ";" + (ch - 0x1f) + "H";
+                            vt52State = 0;
+                            break;
+                    }
+                }
+                return out;
+            }
+
+            /* ================================================================
+             * Demo catalog (hard-coded)
+             * ================================================================ */
+            const DEMOS = [
+                { label: "Default: ODT", type: "odt", file: null },
+                { label: "ATTN/11", type: "lda", file: "demos/ATTN-11.bin" },
+                {
+                    label: "Game of Life",
+                    type: "load",
+                    file: "demos/conway.con",
+                },
+                {
+                    label: "RT11 V4",
+                    type: "rk",
+                    file: "demos/rtv4_rk.dsk",
+                    vt52: true,
+                },
+                { label: "V6 UNIX", type: "rk", file: "demos/v6bin.rk" },
+                { label: "Xortran", type: "rk", file: "demos/XORTRN.RK0" },
+            ];
+
+            async function loadDemo(idx) {
+                const demo = DEMOS[idx];
+                if (!demo) return;
+
+                if (demo.type === "odt") {
+                    if (window._wasm_set_odt) window._wasm_set_odt();
+                    if (!powered) doPowerOn();
+                    else if (window._wasm_reset) window._wasm_reset();
+                    term.focus();
+                    return;
+                }
+
+                dbgLog("Loading " + demo.label + "...");
+                let data;
+                try {
+                    const resp = await fetch(demo.file);
+                    if (!resp.ok) throw new Error("HTTP " + resp.status);
+                    data = new Uint8Array(await resp.arrayBuffer());
+                } catch (e) {
+                    dbgLog("Error: " + e.message);
+                    return;
+                }
+
+                /* Write to Emscripten MEMFS */
+                const fname = demo.file.split("/").pop();
+                const mpath = "/demos/" + fname;
+                try {
+                    Module.FS.mkdir("/demos");
+                } catch (_) {}
+                Module.FS.writeFile(mpath, data);
+
+                if (demo.type === "rk") {
+                    window._wasm_load_rk_image(0, mpath);
+                } else if (demo.type === "lda") {
+                    const rc = window._wasm_load_lda(mpath);
+                    if (rc < 0) {
+                        dbgLog("Error: invalid LDA format or unreadable file.");
+                        return;
+                    }
+                    dbgLog("LDA loaded, start address: " + rc.toString(8));
+                } else if (demo.type === "load") {
+                    const rc = window._wasm_load_asc(mpath);
+                    if (rc < 0) {
+                        dbgLog("Error: invalid ASC format or unreadable file.");
+                        return;
+                    }
+                    dbgLog("Program loaded, start address: " + rc.toString(8));
+                }
+
+                term.clear();
+                vt52Mode = !!demo.vt52;
+                vt52State = 0;
+                if (!powered) {
+                    doPowerOn();
+                } else {
+                    if (window._wasm_reset) window._wasm_reset();
+                }
+                term.focus();
+            }
+
+            /* ================================================================
+             * Shared helpers
+             * ================================================================ */
+
+            /* Active tab tracking */
+            let activeTab = "console";
+
+            /* Parse octal user input, return number or null */
+            function parseOct(s) {
+                s = s.trim().replace(/^0+/, "") || "0";
+                if (!/^[0-7]+$/.test(s)) return null;
+                return parseInt(s, 8);
+            }
+
+            /* 18-bit octal address string (6 digits) */
+            function toOct18(val) {
+                return (val >>> 0).toString(8).padStart(6, "0");
+            }
+
+            /* PSW mode names */
+            const MNAMES = ["K", "S", "?", "U"];
+
+            /* Map 16-bit virtual address to 18-bit physical (I/O page shortcut) */
+            function virt2phys(va) {
+                return va >= 0xe000 ? 0x30000 | va : va;
+            }
+
+            /* ================================================================
+             * Debug GUI panels
+             * ================================================================ */
+            let dbgRunRefreshSkip = 0;
+
+            function escHtml(s) {
+                return s
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;");
+            }
+
+            function dbgUpdateStatus() {
+                const st = document.getElementById("dbg-status-txt");
+                const tm = document.getElementById("dbg-time-txt");
+                if (!st) return;
+                if (!powered || !window._wasm_is_halted) {
+                    st.textContent = "OFF";
+                    st.className = "dbg-status-text";
+                    if (tm) tm.textContent = "";
+                    return;
+                }
+                const halted = window._wasm_is_halted();
+                st.textContent = halted ? "HALTED" : "RUNNING";
+                st.className =
+                    "dbg-status-text " + (halted ? "halted" : "running");
+                if (tm && window._wasm_get_us) {
+                    tm.textContent =
+                        "T=" +
+                        window._wasm_get_us().toLocaleString() +
+                        " \u00b5s";
+                }
+            }
+
+            /* Build a register dump string */
+            function dbgRegDump() {
+                if (!window._wasm_get_reg) return "";
+                const regs = ["R0", "R1", "R2", "R3", "R4", "R5", "SP", "PC"];
+                let line1 = "",
+                    line2 = "";
+                for (let i = 0; i < 4; i++)
+                    line1 +=
+                        regs[i] + "=" + toOct6(window._wasm_get_reg(i)) + "  ";
+                for (let i = 4; i < 8; i++)
+                    line2 +=
+                        regs[i] + "=" + toOct6(window._wasm_get_reg(i)) + "  ";
+                const psw = window._wasm_get_psw();
+                const cm = (psw >> 14) & 3,
+                    pm = (psw >> 12) & 3;
+                const pri = (psw >> 5) & 7;
+                const n = (psw >> 3) & 1,
+                    z = (psw >> 2) & 1,
+                    v = (psw >> 1) & 1,
+                    c = psw & 1;
+                const pswStr =
+                    "PSW=" +
+                    toOct6(psw) +
+                    "  N:" +
+                    n +
+                    " Z:" +
+                    z +
+                    " V:" +
+                    v +
+                    " C:" +
+                    c +
+                    "  Mode:" +
+                    MNAMES[cm] +
+                    ">" +
+                    MNAMES[pm] +
+                    "  PRI:" +
+                    pri;
+                const pc = window._wasm_get_reg(7);
+                const dasm = window._wasm_disasm
+                    ? window._wasm_disasm(pc)
+                    : "???";
+                return (
+                    line1.trimEnd() +
+                    "\n" +
+                    line2.trimEnd() +
+                    "\n" +
+                    pswStr +
+                    "\n" +
+                    toOct6(pc) +
+                    ": " +
+                    (dasm || "???")
+                );
+            }
+
+            function dbgRefreshRegs() {
+                const el = document.getElementById("dbg-regs");
+                if (!el || !window._wasm_get_reg) return;
+                el.textContent = dbgRegDump();
+            }
+
+            let dbgDisasmBase = null; /* null = follow PC */
+
+            function dbgRefreshDisasm() {
+                const el = document.getElementById("dbg-disasm");
+                if (!el || !window._wasm_disasm) return;
+                const pc = window._wasm_get_reg(7);
+                let addr;
+                if (dbgDisasmBase !== null) {
+                    addr = dbgDisasmBase & 0xffff;
+                } else {
+                    addr = (pc - 20) & 0xffff;
+                }
+                let html = "";
+                for (let i = 0; i < 30; i++) {
+                    const a = addr & 0xffff;
+                    const dasm = window._wasm_disasm(a);
+                    const len = window._wasm_disasm_len() || 2;
+                    const isPc = a === pc;
+                    const marker = isPc ? "\u25b8 " : "  ";
+                    const cls = isPc ? ' class="dbg-disasm-pc"' : "";
+                    html +=
+                        "<span" +
+                        cls +
+                        ">" +
+                        marker +
+                        toOct6(a) +
+                        ": " +
+                        escHtml(dasm || "???") +
+                        "</span>\n";
+                    addr = (addr + len) & 0xffff;
+                }
+                el.innerHTML = html;
+                if (dbgDisasmBase === null) {
+                    const pcLine = el.querySelector(".dbg-disasm-pc");
+                    if (pcLine) pcLine.scrollIntoView({ block: "center" });
+                }
+            }
+
+            function dbgRefreshBpList() {
+                const el = document.getElementById("dbg-bp-list");
+                if (!el || !window._wasm_bp_count) return;
+                const n = window._wasm_bp_count();
+                if (n === 0) {
+                    el.innerHTML =
+                        '<span style="color:#484f58">No breakpoints</span>';
+                    return;
+                }
+                let html = "";
+                for (let i = 0; i < n; i++) {
+                    const addr = window._wasm_bp_addr(i);
+                    html +=
+                        '<div class="dbg-bp-row">' +
+                        '<span class="bp-addr">' +
+                        toOct6(addr) +
+                        "</span>" +
+                        '<button class="bp-del" data-addr="' +
+                        addr +
+                        '">\u00d7</button>' +
+                        "</div>";
+                }
+                el.innerHTML = html;
+            }
+
+            function dbgRefreshMMU() {
+                const el = document.getElementById("dbg-mmu");
+                if (!el || !window._wasm_get_mmu_sr0) return;
+                const sr0 = window._wasm_get_mmu_sr0();
+                const sr2 = window._wasm_get_mmu_sr2();
+                const en = sr0 & 1;
+                const acfNames = ["NR", "RO", "xx", "RW"];
+                let out =
+                    "SR0=" +
+                    toOct6(sr0) +
+                    " SR2=" +
+                    toOct6(sr2) +
+                    " " +
+                    (en ? "ON" : "off") +
+                    "\n";
+                out += "Kernel:\n";
+                for (let i = 0; i < 8; i++) {
+                    const par = window._wasm_get_mmu_par(i);
+                    const pdr = window._wasm_get_mmu_pdr(i);
+                    out +=
+                        " K" +
+                        i +
+                        " " +
+                        par.toString(8).padStart(7, "0") +
+                        " " +
+                        pdr.toString(8).padStart(6, "0") +
+                        " " +
+                        acfNames[(pdr >> 1) & 3] +
+                        "\n";
+                }
+                out += "User:\n";
+                for (let i = 0; i < 8; i++) {
+                    const par = window._wasm_get_mmu_par(i + 8);
+                    const pdr = window._wasm_get_mmu_pdr(i + 8);
+                    out +=
+                        " U" +
+                        i +
+                        " " +
+                        par.toString(8).padStart(7, "0") +
+                        " " +
+                        pdr.toString(8).padStart(6, "0") +
+                        " " +
+                        acfNames[(pdr >> 1) & 3] +
+                        "\n";
+                }
+                el.textContent = out.trimEnd();
+            }
+
+            function dbgRefreshMem() {
+                var el = document.getElementById("dbg-mem");
+                if (!el) return;
+                if (!window._wasm_ram_ptr || !Module.HEAPU16) return;
+                var rawPtr = window._wasm_ram_ptr();
+                var nw = window._wasm_ram_words();
+                var idx = rawPtr >>> 1;
+                var chunks = [];
+                for (var w = 0; w < nw; w += 8) {
+                    var line = toOct6(w * 2) + ":";
+                    var ascii = "|";
+                    var end = w + 8 < nw ? w + 8 : nw;
+                    for (var i = w; i < end; i++) {
+                        var word = Module.HEAPU16[idx + i];
+                        line += " " + toOct6(word);
+                        var lo = word & 0x7f,
+                            hi = (word >> 8) & 0x7f;
+                        ascii +=
+                            lo >= 0x20 && lo <= 0x7e
+                                ? String.fromCharCode(lo)
+                                : ".";
+                        ascii +=
+                            hi >= 0x20 && hi <= 0x7e
+                                ? String.fromCharCode(hi)
+                                : ".";
+                    }
+                    ascii += "|";
+                    chunks.push(line + "  " + ascii);
+                }
+                el.textContent = chunks.join("\n");
+            }
+
+            function dbgLog(msg) {
+                const el = document.getElementById("dbg-log");
+                if (!el) return;
+                el.textContent += msg + "\n";
+                el.scrollTop = el.scrollHeight;
+                const lines = el.textContent.split("\n");
+                if (lines.length > 500) {
+                    el.textContent = lines.slice(-400).join("\n");
+                }
+            }
+
+            function dbgRefreshMicro() {
+                if (!powered || !window._wasm_get_mpc) return;
+                const mpc = window._wasm_get_mpc();
+                const ir = window._wasm_get_ir();
+                const irv = window._wasm_is_halted() ? "?" : ir ? "valid" : "-";
+                const psw = window._wasm_get_psw();
+                const ba = window._wasm_get_ba();
+                const ud = window._wasm_get_udata();
+                const breg = window._wasm_get_b_reg();
+                const bx = window._wasm_get_bx_reg();
+                const aout = window._wasm_get_alu_out();
+                const cout = window._wasm_get_alu_cout();
+
+                var label = "",
+                    desc = "";
+                try {
+                    if (window._wasm_get_mpc_label)
+                        label = window._wasm_get_mpc_label(mpc);
+                } catch (_) {}
+                try {
+                    if (window._wasm_get_mpc_desc)
+                        desc = window._wasm_get_mpc_desc(mpc);
+                } catch (_) {}
+
+                const seq = document.getElementById("dbg-micro-seq");
+                if (seq)
+                    seq.textContent =
+                        "MPC  = " +
+                        mpc.toString(8).padStart(3, "0") +
+                        "\n" +
+                        "DESC = " +
+                        (desc || "---") +
+                        "\n" +
+                        "OP   = " +
+                        (label || "---") +
+                        "\n" +
+                        "IR   = " +
+                        toOct6(ir) +
+                        "\n" +
+                        "PSW  = " +
+                        toOct6(psw);
+
+                const alu = document.getElementById("dbg-micro-alu");
+                if (alu)
+                    alu.textContent =
+                        "OUT  = " + toOct6(aout) + "\n" + "COUT = " + cout;
+
+                const bus = document.getElementById("dbg-micro-bus");
+                if (bus)
+                    bus.textContent =
+                        "BA   = " +
+                        ba.toString(8).padStart(6, "0") +
+                        "\n" +
+                        "DATA = " +
+                        toOct6(ud);
+
+                const sh = document.getElementById("dbg-micro-shift");
+                if (sh)
+                    sh.textContent =
+                        "B    = " +
+                        toOct6(breg) +
+                        "\n" +
+                        "BX   = " +
+                        toOct6(bx);
+            }
+
+            function dbgRefreshAll() {
+                if (!powered || !window._wasm_get_reg) return;
+                dbgUpdateStatus();
+                dbgRefreshRegs();
+                dbgRefreshMMU();
+                if (activeDbgSubtab === "debug") {
+                    dbgRefreshDisasm();
+                    dbgRefreshBpList();
+                } else if (activeDbgSubtab === "mem") {
+                    dbgRefreshMem();
+                } else if (activeDbgSubtab === "micro") {
+                    dbgRefreshMicro();
+                }
+            }
+
+            /* Called on CPU halt — refresh panels, log only for spontaneous halts */
+            function consoleHaltDump(reason) {
+                if (!window._wasm_get_reg) return;
+                if (reason >= 2) {
+                    const pc = window._wasm_get_reg(7);
+                    dbgLog("--- CPU halted at PC=" + toOct6(pc) + " ---");
+                }
+                dbgRefreshAll();
+            }
+
+            /* Called when entering the Debug tab */
+            function dbgOnEnter() {
+                dbgRefreshAll();
+            }
+
+            /* ================================================================
+             * Logic Analyzer probe UI
+             * ================================================================ */
+            const LA_STATE_NAMES = ["IDLE", "ARMED", "CAPTURING", "DONE"];
+            let laPrevState = -1;
+            let laDbgLogged = false;
+
+            function laBuildCatalog() {
+                const el = document.getElementById("la-catalog");
+                if (!el) return;
+                if (!window._wasm_probe_sig_count) {
+                    el.innerHTML =
+                        '<div class="la-sig-row" style="color:#484f58;padding:4px 6px">Rebuild WASM to enable probe</div>';
+                    return;
+                }
+                const n = window._wasm_probe_sig_count();
+                el.innerHTML = "";
+                for (let i = 0; i < n; i++) {
+                    const name = window._wasm_probe_sig_name(i);
+                    const desc = window._wasm_probe_sig_desc(i);
+                    const row = document.createElement("div");
+                    row.className = "la-sig-row";
+                    const btn = document.createElement("button");
+                    btn.className = "la-sig-btn";
+                    btn.textContent = "+";
+                    btn.title = "Add " + name;
+                    btn.addEventListener("click", () => {
+                        window._wasm_probe_add(name);
+                        laBuildSelected();
+                    });
+                    const nm = document.createElement("span");
+                    nm.className = "la-sig-name";
+                    nm.textContent = name;
+                    nm.title = desc;
+                    const ds = document.createElement("span");
+                    ds.className = "la-sig-desc";
+                    ds.textContent = desc ? desc.substring(0, 20) : "";
+                    row.append(btn, nm, ds);
+                    el.appendChild(row);
+                }
+            }
+
+            function laBuildSelected() {
+                if (!window._wasm_probe_sel_count) return;
+                const n = window._wasm_probe_sel_count();
+                const el = document.getElementById("la-selected");
+                if (!el) return;
+                el.innerHTML = "";
+                for (let i = 0; i < n; i++) {
+                    const name = window._wasm_probe_sel_name(i);
+                    const row = document.createElement("div");
+                    row.className = "la-sig-row";
+                    const btn = document.createElement("button");
+                    btn.className = "la-sig-btn";
+                    btn.textContent = "\u2212";
+                    btn.title = "Remove " + name;
+                    btn.addEventListener("click", () => {
+                        window._wasm_probe_rm(name);
+                        laBuildSelected();
+                        laRebuildTableHeaders();
+                        laRefreshTable();
+                    });
+                    const nm = document.createElement("span");
+                    nm.className = "la-sig-name";
+                    nm.textContent = name;
+                    row.append(btn, nm);
+                    el.appendChild(row);
+                }
+                laRebuildTableHeaders();
+            }
+
+            function laUpdateStatus() {
+                if (!window._wasm_probe_state) return;
+                const st = window._wasm_probe_state();
+                const name = LA_STATE_NAMES[st] || "UNKNOWN";
+                const el = document.getElementById("la-status");
+                if (!el) return;
+                const cnt = window._wasm_probe_sample_count
+                    ? window._wasm_probe_sample_count()
+                    : 0;
+                el.textContent = name + (st >= 2 ? " (" + cnt + ")" : "");
+                el.className = ["", "armed", "capturing", "done"][st] || "";
+                /* Auto-refresh table when capture completes */
+                if (st === 3 && st !== laPrevState) {
+                    console.log("[LA] DONE — samples:", cnt);
+                    laRefreshTable();
+                }
+                if (st !== laPrevState)
+                    console.log("[LA] state:", laPrevState, "->", st);
+                if (st === 2 && window._wasm_probe_dbg_head) {
+                    if (!laDbgLogged) {
+                        console.log(
+                            "[LA] capturing: head=" +
+                                window._wasm_probe_dbg_head() +
+                                " count=" +
+                                cnt +
+                                " ptr=" +
+                                window._wasm_probe_dbg_ptr() +
+                                " depth=" +
+                                window._wasm_probe_dbg_depth() +
+                                " div=" +
+                                window._wasm_probe_dbg_div(),
+                        );
+                        laDbgLogged = true;
+                    }
+                } else {
+                    laDbgLogged = false;
+                }
+                laPrevState = st;
+            }
+
+            function laRebuildTableHeaders() {
+                if (!window._wasm_probe_sel_count) return;
+                const n = window._wasm_probe_sel_count();
+                const tbl = document.getElementById("la-table");
+                const head = tbl.querySelector("thead tr");
+                /* Time column + signal columns */
+                head.innerHTML = "<th>ns</th>";
+                for (let i = 0; i < n; i++) {
+                    const th = document.createElement("th");
+                    th.textContent = window._wasm_probe_sel_name(i);
+                    head.appendChild(th);
+                }
+            }
+
+            function laRefreshTable() {
+                if (!window._wasm_probe_sample_count) return;
+                const count = window._wasm_probe_sample_count();
+                const nsigs = window._wasm_probe_sel_count
+                    ? window._wasm_probe_sel_count()
+                    : 0;
+                const tbody = document.querySelector("#la-table tbody");
+                if (!tbody) return;
+                /* Pre-compute which signals are 1-bit */
+                const is1bit = [];
+                for (let sig = 0; sig < nsigs; sig++)
+                    is1bit[sig] = window._wasm_probe_sel_is_1bit
+                        ? window._wasm_probe_sel_is_1bit(sig)
+                        : 0;
+                tbody.innerHTML = "";
+                for (let s = 0; s < count; s++) {
+                    const tr = document.createElement("tr");
+                    const td0 = document.createElement("td");
+                    const ns = window._wasm_probe_read_ns
+                        ? window._wasm_probe_read_ns(s)
+                        : s;
+                    td0.textContent = Math.round(ns);
+                    tr.appendChild(td0);
+                    for (let sig = 0; sig < nsigs; sig++) {
+                        const v = window._wasm_probe_read(s, sig);
+                        const td = document.createElement("td");
+                        if (is1bit[sig]) {
+                            td.textContent = v ? "H" : "L";
+                        } else {
+                            td.textContent = v.toString(8);
+                            td.dataset.bin = (v >>> 0)
+                                .toString(2)
+                                .padStart(16, "0");
+                        }
+                        tr.appendChild(td);
+                    }
+                    tbody.appendChild(tr);
+                }
+            }
+
+            /* Called when entering the LA tab */
+            function laOnEnter() {
+                laBuildCatalog();
+                laBuildSelected();
+                laUpdateStatus();
+            }
+
+            /* ================================================================
+             * Debug: click to print coordinates
+             * ================================================================ */
+            if (PANEL_DEBUG) {
+                document
+                    .getElementById("panel-overlay")
+                    .addEventListener("click", (e) => {
+                        const rect = document
+                            .getElementById("panel-img")
+                            .getBoundingClientRect();
+                        const x = Math.round(
+                            ((e.clientX - rect.left) / rect.width) *
+                                PANEL_IMG_W,
+                        );
+                        const y = Math.round(
+                            ((e.clientY - rect.top) / rect.height) *
+                                PANEL_IMG_H,
+                        );
+                        console.log(`x=${x}, y=${y}`);
+                    });
+            }
+
+            /* ================================================================
+             * Emscripten module — MUST be defined before ll-34.js is loaded
+             * ================================================================ */
+            var Module = {
+                print: () => {},
+                printErr: (s) => {
+                    if (s && !s.startsWith("wasm")) dbgLog("[ll-34] " + s);
+                },
+
+                onRuntimeInitialized: function () {
+                    /* Wrap exported C functions */
+                    window._wasm_power_on = Module.cwrap(
+                        "wasm_power_on",
+                        null,
+                        [],
+                    );
+                    window._wasm_power_off = Module.cwrap(
+                        "wasm_power_off",
+                        null,
+                        [],
+                    );
+                    window._wasm_reset = Module.cwrap("wasm_reset", null, []);
+                    window._wasm_load_rk_image = Module.cwrap(
+                        "wasm_load_rk_image",
+                        null,
+                        ["number", "string"],
+                    );
+                    window._wasm_console_key = Module.cwrap(
+                        "wasm_console_key",
+                        null,
+                        ["number"],
+                    );
+                    window._wasm_rx_push = Module.cwrap("wasm_rx_push", null, [
+                        "number",
+                    ]);
+                    window._wasm_tx_poll = Module.cwrap(
+                        "wasm_tx_poll",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_display_addr = Module.cwrap(
+                        "wasm_get_display_addr",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_display_data = Module.cwrap(
+                        "wasm_get_display_data",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_leds = Module.cwrap(
+                        "wasm_get_leds",
+                        "number",
+                        [],
+                    );
+                    window._wasm_set_odt = Module.cwrap(
+                        "wasm_set_odt",
+                        null,
+                        [],
+                    );
+                    window._wasm_load_lda = Module.cwrap(
+                        "wasm_load_lda",
+                        "number",
+                        ["string"],
+                    );
+                    window._wasm_load_asc = Module.cwrap(
+                        "wasm_load_asc",
+                        "number",
+                        ["string"],
+                    );
+
+                    /* Debug console */
+                    window._wasm_get_reg = Module.cwrap(
+                        "wasm_get_reg",
+                        "number",
+                        ["number"],
+                    );
+                    window._wasm_get_psw = Module.cwrap(
+                        "wasm_get_psw",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_ir = Module.cwrap(
+                        "wasm_get_ir",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_us = Module.cwrap(
+                        "wasm_get_us",
+                        "number",
+                        [],
+                    );
+                    window._wasm_is_halted = Module.cwrap(
+                        "wasm_is_halted",
+                        "number",
+                        [],
+                    );
+                    window._wasm_halt = Module.cwrap("wasm_halt", null, []);
+                    window._wasm_run = Module.cwrap("wasm_run", null, []);
+                    window._wasm_step = Module.cwrap("wasm_step", null, []);
+                    window._wasm_ustep_n = Module.cwrap("wasm_ustep_n", null, [
+                        "number",
+                    ]);
+                    window._wasm_poll_halt = Module.cwrap(
+                        "wasm_poll_halt",
+                        "number",
+                        [],
+                    );
+                    window._wasm_examine = Module.cwrap(
+                        "wasm_examine",
+                        "number",
+                        ["number"],
+                    );
+                    window._wasm_deposit = Module.cwrap("wasm_deposit", null, [
+                        "number",
+                        "number",
+                    ]);
+                    window._wasm_ram_ptr = Module.cwrap(
+                        "wasm_ram_ptr",
+                        "number",
+                        [],
+                    );
+                    window._wasm_ram_words = Module.cwrap(
+                        "wasm_ram_words",
+                        "number",
+                        [],
+                    );
+                    window._wasm_disasm = Module.cwrap(
+                        "wasm_disasm",
+                        "string",
+                        ["number"],
+                    );
+                    window._wasm_disasm_len = Module.cwrap(
+                        "wasm_disasm_len",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_trace_count = Module.cwrap(
+                        "wasm_get_trace_count",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_trace_pc = Module.cwrap(
+                        "wasm_get_trace_pc",
+                        "number",
+                        ["number"],
+                    );
+                    window._wasm_get_trace_ir = Module.cwrap(
+                        "wasm_get_trace_ir",
+                        "number",
+                        ["number"],
+                    );
+                    window._wasm_trace_clear = Module.cwrap(
+                        "wasm_trace_clear",
+                        null,
+                        [],
+                    );
+                    /* MMU */
+                    window._wasm_get_mmu_sr0 = Module.cwrap(
+                        "wasm_get_mmu_sr0",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_mmu_sr2 = Module.cwrap(
+                        "wasm_get_mmu_sr2",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_mmu_par = Module.cwrap(
+                        "wasm_get_mmu_par",
+                        "number",
+                        ["number"],
+                    );
+                    window._wasm_get_mmu_pdr = Module.cwrap(
+                        "wasm_get_mmu_pdr",
+                        "number",
+                        ["number"],
+                    );
+                    /* Breakpoints */
+                    window._wasm_bp_set = Module.cwrap(
+                        "wasm_bp_set",
+                        "number",
+                        ["number"],
+                    );
+                    window._wasm_bp_del = Module.cwrap(
+                        "wasm_bp_del",
+                        "number",
+                        ["number"],
+                    );
+                    window._wasm_bp_clear = Module.cwrap(
+                        "wasm_bp_clear",
+                        null,
+                        [],
+                    );
+                    window._wasm_bp_count = Module.cwrap(
+                        "wasm_bp_count",
+                        "number",
+                        [],
+                    );
+                    window._wasm_bp_addr = Module.cwrap(
+                        "wasm_bp_addr",
+                        "number",
+                        ["number"],
+                    );
+                    /* Micro-state */
+                    window._wasm_get_mpc = Module.cwrap(
+                        "wasm_get_mpc",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_mpc_label = Module.cwrap(
+                        "wasm_get_mpc_label",
+                        "string",
+                        ["number"],
+                    );
+                    window._wasm_get_mpc_desc = Module.cwrap(
+                        "wasm_get_mpc_desc",
+                        "string",
+                        ["number"],
+                    );
+                    window._wasm_get_ba = Module.cwrap(
+                        "wasm_get_ba",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_b_reg = Module.cwrap(
+                        "wasm_get_b_reg",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_bx_reg = Module.cwrap(
+                        "wasm_get_bx_reg",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_alu_out = Module.cwrap(
+                        "wasm_get_alu_out",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_alu_cout = Module.cwrap(
+                        "wasm_get_alu_cout",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_udata = Module.cwrap(
+                        "wasm_get_udata",
+                        "number",
+                        [],
+                    );
+                    /* Probe */
+                    window._wasm_probe_sig_count = Module.cwrap(
+                        "wasm_probe_sig_count",
+                        "number",
+                        [],
+                    );
+                    window._wasm_probe_sig_name = Module.cwrap(
+                        "wasm_probe_sig_name",
+                        "string",
+                        ["number"],
+                    );
+                    window._wasm_probe_sig_desc = Module.cwrap(
+                        "wasm_probe_sig_desc",
+                        "string",
+                        ["number"],
+                    );
+                    window._wasm_probe_add = Module.cwrap(
+                        "wasm_probe_add",
+                        "number",
+                        ["string"],
+                    );
+                    window._wasm_probe_rm = Module.cwrap(
+                        "wasm_probe_rm",
+                        "number",
+                        ["string"],
+                    );
+                    window._wasm_probe_clear_sigs = Module.cwrap(
+                        "wasm_probe_clear_sigs",
+                        null,
+                        [],
+                    );
+                    window._wasm_probe_sel_count = Module.cwrap(
+                        "wasm_probe_sel_count",
+                        "number",
+                        [],
+                    );
+                    window._wasm_probe_sel_name = Module.cwrap(
+                        "wasm_probe_sel_name",
+                        "string",
+                        ["number"],
+                    );
+                    window._wasm_probe_sel_is_1bit = Module.cwrap(
+                        "wasm_probe_sel_is_1bit",
+                        "number",
+                        ["number"],
+                    );
+                    window._wasm_probe_set_trigger = Module.cwrap(
+                        "wasm_probe_set_trigger",
+                        "number",
+                        ["string", "number", "number"],
+                    );
+                    window._wasm_probe_set_depth = Module.cwrap(
+                        "wasm_probe_set_depth",
+                        null,
+                        ["number"],
+                    );
+                    window._wasm_probe_set_rate = Module.cwrap(
+                        "wasm_probe_set_rate",
+                        null,
+                        ["number"],
+                    );
+                    window._wasm_probe_set_pos = Module.cwrap(
+                        "wasm_probe_set_pos",
+                        null,
+                        ["number"],
+                    );
+                    window._wasm_probe_arm = Module.cwrap(
+                        "wasm_probe_arm",
+                        null,
+                        [],
+                    );
+                    window._wasm_probe_disarm = Module.cwrap(
+                        "wasm_probe_disarm",
+                        null,
+                        [],
+                    );
+                    window._wasm_probe_state = Module.cwrap(
+                        "wasm_probe_state",
+                        "number",
+                        [],
+                    );
+                    window._wasm_probe_sample_count = Module.cwrap(
+                        "wasm_probe_sample_count",
+                        "number",
+                        [],
+                    );
+                    window._wasm_probe_read = Module.cwrap(
+                        "wasm_probe_read",
+                        "number",
+                        ["number", "number"],
+                    );
+                    window._wasm_probe_read_ns = Module.cwrap(
+                        "wasm_probe_read_ns",
+                        "number",
+                        ["number"],
+                    );
+                    window._wasm_probe_dbg_head = Module.cwrap(
+                        "wasm_probe_dbg_head",
+                        "number",
+                        [],
+                    );
+                    window._wasm_probe_dbg_ptr = Module.cwrap(
+                        "wasm_probe_dbg_ptr",
+                        "number",
+                        [],
+                    );
+                    window._wasm_probe_dbg_depth = Module.cwrap(
+                        "wasm_probe_dbg_depth",
+                        "number",
+                        [],
+                    );
+                    window._wasm_probe_dbg_div = Module.cwrap(
+                        "wasm_probe_dbg_div",
+                        "number",
+                        [],
+                    );
+
+                    /* Hide loading overlay, build panel, init audio */
+                    document.getElementById("loading").style.display = "none";
+                    /* Force sound checkbox to match initial soundEnabled state */
+                    document.getElementById("sound-chk").checked = soundEnabled;
+                    buildPanel();
+                    fitAddon.fit();
+                    initAudio();
+
+                    /* Wire keyboard → DL11 RX */
+                    term.onData((data) => {
+                        for (let i = 0; i < data.length; i++) {
+                            let ch = data.charCodeAt(i);
+                            if (ch === 10) ch = 13;
+                            window._wasm_rx_push(ch);
+                        }
+                    });
+
+                    /* Wire panel buttons */
+                    document
+                        .getElementById("panel-overlay")
+                        .addEventListener("pointerdown", (e) => {
+                            const btn = e.target.closest(".panel-btn");
+                            if (btn) {
+                                playClick();
+                                btn.classList.add("pressed");
+                                setTimeout(
+                                    () => btn.classList.remove("pressed"),
+                                    150,
+                                );
+                                const key = parseInt(btn.dataset.key);
+                                if (
+                                    key >= 0 &&
+                                    powered &&
+                                    window._wasm_console_key
+                                ) {
+                                    window._wasm_console_key(key);
+                                }
+                            }
+                        });
+
+                    /* Demo selector */
+                    document
+                        .getElementById("demo-select")
+                        .addEventListener("change", function () {
+                            const idx = parseInt(this.value);
+                            this.value =
+                                ""; /* reset to allow re-selecting the same demo */
+                            loadDemo(idx);
+                        });
+
+                    /* Sound checkbox */
+                    document
+                        .getElementById("sound-chk")
+                        .addEventListener("change", function () {
+                            setSoundEnabled(this.checked);
+                        });
+
+                    /* ── Debug GUI tab ── */
+                    document
+                        .getElementById("dbg-pause-btn")
+                        .addEventListener("click", () => {
+                            if (!powered) return;
+                            window._wasm_halt();
+                            dbgLog("--- CPU paused ---");
+                            dbgRefreshAll();
+                        });
+                    document
+                        .getElementById("dbg-resume-btn")
+                        .addEventListener("click", () => {
+                            if (!powered) return;
+                            window._wasm_run();
+                            dbgUpdateStatus();
+                            dbgLog("Running.");
+                        });
+                    document
+                        .getElementById("dbg-step-btn")
+                        .addEventListener("click", () => {
+                            if (!powered) return;
+                            window._wasm_step();
+                            setTimeout(() => dbgRefreshAll(), 50);
+                        });
+                    document
+                        .getElementById("dbg-bp-add-btn")
+                        .addEventListener("click", () => {
+                            const inp = document.getElementById("dbg-bp-input");
+                            const addr = parseOct(inp.value);
+                            if (addr === null) return;
+                            window._wasm_bp_set(addr & 0xffff);
+                            inp.value = "";
+                            dbgRefreshBpList();
+                        });
+                    document
+                        .getElementById("dbg-bp-input")
+                        .addEventListener("keydown", (e) => {
+                            if (e.key === "Enter")
+                                document
+                                    .getElementById("dbg-bp-add-btn")
+                                    .click();
+                        });
+                    document
+                        .getElementById("dbg-bp-list")
+                        .addEventListener("click", (e) => {
+                            const btn = e.target.closest(".bp-del");
+                            if (!btn) return;
+                            const addr = parseInt(btn.dataset.addr);
+                            window._wasm_bp_del(addr);
+                            dbgRefreshBpList();
+                        });
+                    document
+                        .getElementById("dbg-ustep-btn")
+                        .addEventListener("click", () => {
+                            if (!powered) return;
+                            window._wasm_ustep_n(1);
+                            setTimeout(() => {
+                                dbgRefreshRegs();
+                                dbgRefreshMMU();
+                                dbgRefreshMicro();
+                            }, 50);
+                        });
+                    /* Disasm base address controls */
+                    document
+                        .getElementById("dbg-disasm-pc-btn")
+                        .addEventListener("click", () => {
+                            dbgDisasmBase = null;
+                            document.getElementById("dbg-disasm-base").value =
+                                "";
+                            dbgRefreshDisasm();
+                        });
+                    document
+                        .getElementById("dbg-disasm-go-btn")
+                        .addEventListener("click", () => {
+                            const v = parseOct(
+                                document.getElementById("dbg-disasm-base")
+                                    .value,
+                            );
+                            if (v !== null) {
+                                dbgDisasmBase = v;
+                                dbgRefreshDisasm();
+                            }
+                        });
+                    document
+                        .getElementById("dbg-disasm-base")
+                        .addEventListener("keydown", (e) => {
+                            if (e.key === "Enter")
+                                document
+                                    .getElementById("dbg-disasm-go-btn")
+                                    .click();
+                        });
+
+                    /* ── Logic Analyzer buttons ── */
+                    document
+                        .getElementById("la-arm-btn")
+                        .addEventListener("click", () => {
+                            if (!powered) return;
+                            /* Apply config before arming */
+                            const trigSig = document
+                                .getElementById("la-trig-sig")
+                                .value.trim();
+                            const trigVal =
+                                parseOct(
+                                    document.getElementById("la-trig-val")
+                                        .value,
+                                ) || 0;
+                            const trigMask =
+                                parseOct(
+                                    document.getElementById("la-trig-mask")
+                                        .value,
+                                ) || 0xffff;
+                            const depth =
+                                parseInt(
+                                    document.getElementById("la-depth").value,
+                                ) || 512;
+                            const rate =
+                                parseInt(
+                                    document.getElementById("la-rate").value,
+                                ) || 1;
+                            const pos =
+                                parseInt(
+                                    document.getElementById("la-pos").value,
+                                ) || 50;
+                            window._wasm_probe_set_depth(depth);
+                            window._wasm_probe_set_rate(rate);
+                            window._wasm_probe_set_pos(pos);
+                            if (trigSig)
+                                window._wasm_probe_set_trigger(
+                                    trigSig,
+                                    trigVal,
+                                    trigMask,
+                                );
+                            const nsigs = window._wasm_probe_sel_count
+                                ? window._wasm_probe_sel_count()
+                                : 0;
+                            const halted = window._wasm_is_halted
+                                ? window._wasm_is_halted()
+                                : -1;
+                            console.log(
+                                "[LA] Arm: depth=" +
+                                    depth +
+                                    " rate=" +
+                                    rate +
+                                    " pos=" +
+                                    pos +
+                                    " trig=" +
+                                    (trigSig || "none") +
+                                    " sigs=" +
+                                    nsigs +
+                                    " halted=" +
+                                    halted,
+                            );
+                            window._wasm_probe_arm();
+                            laPrevState = -1; /* force state change detection */
+                            laUpdateStatus();
+                            laRebuildTableHeaders();
+                        });
+                    document
+                        .getElementById("la-disarm-btn")
+                        .addEventListener("click", () => {
+                            if (window._wasm_probe_disarm)
+                                window._wasm_probe_disarm();
+                            laUpdateStatus();
+                        });
+
+                    /* Power zone click */
+                    document
+                        .getElementById("power-zone")
+                        .addEventListener("click", async () => {
+                            ensureAudioCtx();
+                            if (audioCtx.state === "suspended") {
+                                try {
+                                    await audioCtx.resume();
+                                } catch (_) {}
+                            }
+                            startKeepAlive();
+                            if (!powered) doPowerOn();
+                            else doPowerOff();
+                        });
+
+                    /* Main render loop */
+                    let laStatusSkip = 0;
+                    function renderLoop() {
+                        /* Drain TX buffer → xterm */
+                        let s = "";
+                        let ch;
+                        while ((ch = window._wasm_tx_poll()) >= 0)
+                            s += String.fromCharCode(ch);
+                        if (s) {
+                            if (window._dbgTxLog)
+                                console.log(
+                                    "TX:",
+                                    [...s]
+                                        .map((c) =>
+                                            c
+                                                .charCodeAt(0)
+                                                .toString(16)
+                                                .padStart(2, "0"),
+                                        )
+                                        .join(" "),
+                                );
+                            term.write(vt52Mode ? vt52translate(s) : s);
+                        }
+
+                        /* Update LEDs and display */
+                        pollPanel();
+
+                        /* Detect any CPU halt (1=debugger, 2=spontaneous HALT/crash) */
+                        if (powered && window._wasm_poll_halt) {
+                            const haltReason = window._wasm_poll_halt();
+                            if (haltReason) consoleHaltDump(haltReason);
+                        }
+
+                        /* Auto-refresh debug panels at ~2 Hz while CPU is running */
+                        if (
+                            activeTab === "debug" &&
+                            powered &&
+                            window._wasm_is_halted &&
+                            !window._wasm_is_halted()
+                        ) {
+                            if (++dbgRunRefreshSkip >= 30) {
+                                dbgRunRefreshSkip = 0;
+                                dbgUpdateStatus();
+                            }
+                        }
+
+                        /* Poll LA status — every frame during capture, else ~4 Hz */
+                        if (activeTab === "la" && powered) {
+                            const laActive =
+                                laPrevState === 1 || laPrevState === 2;
+                            if (laActive || ++laStatusSkip >= 15) {
+                                laStatusSkip = 0;
+                                laUpdateStatus();
+                            }
+                        }
+
+                        requestAnimationFrame(renderLoop);
+                    }
+                    requestAnimationFrame(renderLoop);
+
+                    term.focus();
+                },
+            };
+        </script>
+
+        <!-- Emscripten glue + WASM — loaded AFTER Module is defined -->
+        <script src="ll-34.js"></script>
+    </body>
+</html>
