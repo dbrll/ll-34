@@ -1769,7 +1769,7 @@
              * ================================================================ */
             let powered = false;
 
-            function doPowerOn() {
+            function doPowerOn(uiOnly) {
                 if (powered) return;
                 powered = true;
                 document
@@ -1777,7 +1777,7 @@
                     .classList.add("visible");
                 setDisplayOn(true);
                 startPowerAudio();
-                if (window._wasm_power_on) window._wasm_power_on();
+                if (!uiOnly && window._wasm_power_on) window._wasm_power_on();
             }
 
             function doPowerOff() {
@@ -1980,6 +1980,10 @@
                     return;
                 }
 
+                term.clear();
+                vt52Mode = !!demo.vt52;
+                vt52State = 0;
+
                 /* Write to Emscripten MEMFS */
                 const fname = demo.file.split("/").pop();
                 const mpath = "/demos/" + fname;
@@ -1990,6 +1994,8 @@
 
                 if (demo.type === "rk") {
                     window._wasm_load_rk_image(0, mpath);
+                    if (!powered) doPowerOn(true);
+                    if (window._wasm_reset) window._wasm_reset();
                 } else if (demo.type === "lda") {
                     const rc = window._wasm_load_lda(mpath);
                     if (rc < 0) {
@@ -1997,6 +2003,8 @@
                         return;
                     }
                     dbgLog("LDA loaded, start address: " + rc.toString(8));
+                    if (!powered) doPowerOn(true);
+                    if (window._wasm_reset) window._wasm_reset();
                 } else if (demo.type === "load") {
                     const rc = window._wasm_load_asc(mpath);
                     if (rc < 0) {
@@ -2004,16 +2012,10 @@
                         return;
                     }
                     dbgLog("Program loaded, start address: " + rc.toString(8));
-                }
-
-                term.clear();
-                vt52Mode = !!demo.vt52;
-                vt52State = 0;
-                if (!powered) {
-                    doPowerOn();
-                } else {
+                    if (!powered) doPowerOn(true);
                     if (window._wasm_reset) window._wasm_reset();
                 }
+
                 term.focus();
             }
 
