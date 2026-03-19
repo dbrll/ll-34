@@ -1,12 +1,11 @@
 # ll/34
 
-**ll/34 is a circuit-level emulator for the PDP-11/34A (1976), running a virtual CPU reverse-engineered from the schematics, microcode, and behavior of an actual PDP-11/34A.**
+**ll/34 is a circuit-level emulator for the PDP-11/34A (1976), running a virtual CPU reverse-engineered from the schematics, microcode, and logic captures of an actual PDP-11/34A.**
 
 It was originally designed as a digital replica of the real CPU to assist with troubleshooting at the signal level.
 The virtual KD11-EA CPU essentially consists of a C translation of the schematics, and lookups to the ROM tables. All combinational ROMs are reverse-engineered, and the clock generator is precisely modeled.
 
 Circuit-level (ROM truth tables + combinatorial logic) was chosen other gate-level (Verilog) because it is low-level enough to reproduce hardware bugs, yet fast enough to run programs.
-
 
 ## Emulated devices
 
@@ -17,7 +16,7 @@ Circuit-level (ROM truth tables + combinatorial logic) was chosen other gate-lev
 - KW11 line clock (50/60 Hz)
 - Programmer Console (including maintenance mode for CPU troubleshooting)
 - RK05 drives (high-level emulation of the RK11 controller)
-- RL01 and RL02 drives (high-level emulation of the RL11 controller. NB: the M9301-YF has no bootstrap for RL11 drives, a separate bootstrap is provided)
+- RL01 and RL02 drives (high-level emulation of the RL11 controller)
 - Tape reader
 - VT100 terminal with stdio, TCP port or PTY modes
 
@@ -36,7 +35,6 @@ Internally, the CPU is composed of the following components:
 | `clockgen.c`   | Clock generator. Models the E106 delay line (TAP 30/90/120 feedback, TRAN INH bus wait). Short cycles: 180 ns, long cycles: 240 ns, bus transfers stretch until SSYN returns.                                                                                                                 |
 | `clock.c`      | Real-time pacing. Keeps simulated time in sync with wall-clock time.                                                                                                                                                                                                                          |
 | `int.c`        | Interrupt arbiter. BR4-BR7 priority queue, approximates the UNIBUS daisy-chain grant order.                                                                                                                                                                                                   |
-
 
 ## Programmer Console (Ctrl-P)
 
@@ -60,7 +58,7 @@ The Debug Console provides an interactive debugger for both microcode-level and 
 
 ## Logic Analyzer (Ctrl-L)
 
-Troubleshooting ll-34 during its development turned out to be so similar to troubleshooting the real hardware that an internal logic analyzer was implemented to trace the signals and probe the datapath. This proved instrumental in tracking down subtle ROM and timing bugs in the virtual CPU. It can also be used as a reference to troubleshoot the real hardware.
+Troubleshooting ll-34 during its development turned out to be so similar to troubleshooting the real hardware that an internal logic analyzer was implemented to trace the signals and probe the datapath. This proved instrumental in tracking down subtle ROM and timing bugs in the virtual CPU. It can also be used as a reference to troubleshoot the real hardware, just like the working hardware helped to develop the emulator.
 
 The logic analyzer allows the probing of 102 points on major CPU signals, mapped to physical chip pins (KD1:Exx:pin notation matching the DEC schematics K1-5 through K2-9). Logical aliases (MPC, ALU_OUT, IR, PSW…) are provided for convenience.
 
@@ -78,15 +76,14 @@ Captures use a ring buffer (up to 64K samples) with configurable trigger on any 
 </p>   
 </figure>
 
-
 ## Sample Programs
 
-ll-34 comes with a few programs and systems to try: a Game of Life, V6 UNIX, RT-11 V3, and a small trainable Transformer with self-attention.
+ll-34 comes with a few programs and systems to try: a Game of Life, V6 UNIX, RT-11 V4 with the original Tetris game, and [ATTN/11](https://github.com/dbrll/ATTN-11/), a small trainable Transformer with self-attention.
 
 ## Building
 
 `make` + a C11 compiler, there are no other dependencies.
 
-The result is a standalone binary of approximately 90 KB. Tested on Linux (x86_64 and aarch64) with both musl and glibc, macOS aarch64, and NetBSD 10 aarch64.
+Verified to compile with no warnings on Linux (x86_64 and aarch64) with both musl and glibc, macOS aarch64, and NetBSD 10 aarch64.
 
-A standalone WebAssembly version with a photo-realistic GUI is also available here: https://dbrll.github.io/ll-34
+A standalone WebAssembly version with a photo-realistic GUI is also available here: https://dbrll.github.io/ll-34.
