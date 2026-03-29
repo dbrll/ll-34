@@ -5,7 +5,7 @@
 It was originally designed as a digital replica of the real CPU to assist with troubleshooting at the signal level.
 The virtual KD11-EA CPU essentially consists of a C translation of the schematics, and lookups to the ROM tables. All combinational ROMs are reverse-engineered, and the clock generator is precisely modeled.
 
-Circuit-level (ROM truth tables + combinatorial logic) was chosen other gate-level (Verilog) because it is low-level enough to reproduce hardware bugs, yet fast enough to run programs.
+Circuit-level (ROM truth tables + combinatorial logic) was chosen over gate-level (Verilog) because it is low-level enough to reproduce hardware bugs, yet fast enough to run programs.
 
 ## Emulated devices
 
@@ -55,6 +55,33 @@ The Debug Console provides an interactive debugger for both microcode-level and 
 - `c [addr] [n]`: memory dump (octal)
 - `mmu`: show MMU state (kernel + user PAR/PDR, current mode marked)
 - `r`: register dump
+
+## Getting started
+
+After building with `make`, boot an operating system:
+
+### RT-11
+
+```
+./ll-34 --rk ./wasm/demos/rtv4_rk.dsk
+```
+
+The boot ROM will automatically load from the RK11 and start the operating
+system.  `DIR` will list files, `HELP` will print help, `RUN TETRIS`
+will start the Tetris demo (although the `$TERM` will probably be wrong?).
+
+
+### v6 Unix
+
+```
+./ll-34 --rk ./wasm/demos/v6bin.rk
+```
+
+The bootloader will print a minimal `@` prompt.  Type `rkunix` and
+hit enters and a few seconds later you should get a `login:` prompt.
+Enter the username `root` with no password and you're in!
+One note is that `cd` is named `chdir` in early unix.
+
 
 ## Logic Analyzer (Ctrl-L)
 
