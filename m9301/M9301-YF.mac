@@ -335,7 +335,7 @@ S1LOC = 173024
 173040 120000		CMP	R0, R0
 
 ; Entry point -- RP11 Boot w/out Diagnostics
-; 	DIP switches xx11101111  (173042)
+; 	DIP switches xx11101110  (173042)
 
 173042 000530
 
@@ -570,7 +570,7 @@ S1LOC = 173024
 173544 120000
 
 ; Entry point -- RX11 Boot w/out Diagnostic
-; 	DIP switches xx01001101  (173544)
+; 	DIP switches xx01001100  (173546)
 
 173546 000666
 
