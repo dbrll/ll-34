@@ -1,5 +1,5 @@
 CC     = cc
-CFLAGS = -Wall -Wextra -O2 -std=c11 -I.
+CFLAGS = -Wall -Wextra -O3 -flto -std=c11 -I.
 LDFLAGS =
 
 TARGET = ll-34

@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <time.h>
 #include <unistd.h>
 #include <termios.h>
 #include <libgen.h>
@@ -1458,6 +1459,38 @@ int main(int argc, char **argv) {
                  &cpu.mmu, mmu_read, mmu_write, "MMU SR", 100);
     bus_register(&bus, 0x3FF80, 0x3FFBE,   /* User 777600-777676 */
                  &cpu.mmu, mmu_read, mmu_write, "U PAR/PDR", 100);
+
+    /* Make sure the host is fast enough to run ll-34:
+     * benchmark 1M usteps in ODT, then reset for normal boot
+     */
+    {
+        kd11ea_reset(&cpu);
+        cpu.bus = &bus;
+        rom_set_s1(&rom, 0);
+        power_on(&cpu, &bus);
+
+        struct timespec t0, t1;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        for (long i = 0; i < 1000000L; i++)
+            kd11ea_ustep(&cpu);
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+
+        double elapsed = (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) * 1e-9;
+        double ns_per = elapsed / 1e6 * 1e9;
+        double ratio = (double)CYCLE_SHORT_NS / ns_per;
+        if (ratio >= 1.0)
+            fprintf(stderr, "ll-34: host can emulate %.1fx real KD11-EA: speed OK\n", ratio);
+        else
+            fprintf(stderr, "ll-34: WARNING: host too slow (%.1fx real KD11-EA speed)"
+                    "cycle accuracy not guaranteed\n", ratio);
+
+        /* Reset CPU and peripherals for normal boot */
+        kd11ea_reset(&cpu);
+        cpu.bus = &bus;
+        rom_set_s1(&rom, s1_val);
+        dl11_init(&dl, 9600);
+        kw11_init(&kw, 60);
+    }
 
     if (strcmp(tty_arg, "stdio") == 0) {
         tty = tty_stdio_create();

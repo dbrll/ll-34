@@ -86,4 +86,11 @@ ll-34 comes with a few programs and systems to try: a Game of Life, V6 UNIX, RT-
 
 Verified to compile with no warnings on Linux (x86_64 and aarch64) with both musl and glibc, macOS aarch64, and NetBSD 10 aarch64.
 
-A standalone WebAssembly version with a photo-realistic GUI is also available here: https://dbrll.github.io/ll-34.
+## Running
+
+Besides the CLI, a standalone WebAssembly version with a photo-realistic GUI is available here: https://dbrll.github.io/ll-34.
+
+`ll-34` is a resource-intensive emulator. Unlike instruction-level emulators, it steps through the microcode one cycle at a time and runs the ALU, combinatorial ROMs, scratchpad, clock generator, and bus timing at each step.
+The host must sustain the 5.5 MHz clock generator pace continuously to remain cycle accurate.
+
+At startup, ll-34 benchmarks itself and reports its speed relative to a real KD11-EA. A ratio below 1x means the host cannot keep up and timing accuracy is not guaranteed. The benchmark is not available in the WebAssembly version, where browser timer resolution makes it unreliable. As the WASM build is slower than native, running it on a smartphone will typically be too slow.
