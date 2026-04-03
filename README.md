@@ -56,9 +56,29 @@ The Debug Console provides an interactive debugger for both microcode-level and 
 - `mmu`: show MMU state (kernel + user PAR/PDR, current mode marked)
 - `r`: register dump
 
-## Getting started
+## Logic Analyzer (Ctrl-L)
 
-After building with `make`, boot an operating system:
+Troubleshooting ll-34 during its development turned out to be so similar to troubleshooting the real hardware that an internal logic analyzer was implemented to trace the signals and probe the datapath. This proved instrumental in tracking down subtle ROM and timing bugs in the virtual CPU. It can also be used as a reference to troubleshoot the real hardware, just like the working hardware helped to develop the emulator.
+
+The logic analyzer allows the probing of 102 points on major CPU signals, mapped to physical chip pins (KD1:Exx:pin notation matching the DEC schematics K1-5 through K2-9). Logical aliases (MPC, ALU_OUT, IR, PSW…) are provided for convenience.
+
+Sample rate is the real-time CPU clock (5,555,556 Hz) with a resolution of 180 ns per sample. A configurable divider reduces the sample rate for longer capture windows.
+
+Captures use a ring buffer (up to 64K samples) with configurable trigger on any signal, adjustable trigger position (pre/post ratio), and CSV export for offline analysis.
+
+<figure>
+<p align="center">
+<img src="https://github.com/user-attachments/assets/5d07fc3d-dbe9-4cfe-9ef9-567232176dae" width="50%">
+<figcaption>
+</p>   
+<p align="center">
+<i>Logic captures were used liberally throughout the project to map and debug poorly understood multiplexing paths.</i></figcaption>
+</p>   
+</figure>
+
+## Sample Programs
+
+ll-34 comes with a few programs and systems to try: a Game of Life, V6 UNIX, RT-11 V4 with the original Tetris game, and [ATTN/11](https://github.com/dbrll/ATTN-11/), a small trainable Transformer with self-attention.
 
 ### RT-11
 
@@ -85,30 +105,6 @@ Enter the username `root` with no password and you're in!
 One note is that `cd` is named `chdir` in early unix.
 
 
-## Logic Analyzer (Ctrl-L)
-
-Troubleshooting ll-34 during its development turned out to be so similar to troubleshooting the real hardware that an internal logic analyzer was implemented to trace the signals and probe the datapath. This proved instrumental in tracking down subtle ROM and timing bugs in the virtual CPU. It can also be used as a reference to troubleshoot the real hardware, just like the working hardware helped to develop the emulator.
-
-The logic analyzer allows the probing of 102 points on major CPU signals, mapped to physical chip pins (KD1:Exx:pin notation matching the DEC schematics K1-5 through K2-9). Logical aliases (MPC, ALU_OUT, IR, PSW…) are provided for convenience.
-
-Sample rate is the real-time CPU clock (5,555,556 Hz) with a resolution of 180 ns per sample. A configurable divider reduces the sample rate for longer capture windows.
-
-Captures use a ring buffer (up to 64K samples) with configurable trigger on any signal, adjustable trigger position (pre/post ratio), and CSV export for offline analysis.
-
-<figure>
-<p align="center">
-<img src="https://github.com/user-attachments/assets/5d07fc3d-dbe9-4cfe-9ef9-567232176dae" width="50%">
-<figcaption>
-</p>   
-<p align="center">
-<i>Logic captures were used liberally throughout the project to map and debug poorly understood multiplexing paths.</i></figcaption>
-</p>   
-</figure>
-
-## Sample Programs
-
-ll-34 comes with a few programs and systems to try: a Game of Life, V6 UNIX, RT-11 V4 with the original Tetris game, and [ATTN/11](https://github.com/dbrll/ATTN-11/), a small trainable Transformer with self-attention.
-
 ## Building
 
 `make` + a C11 compiler, there are no other dependencies.
@@ -119,7 +115,8 @@ Verified to compile with no warnings on Linux (x86_64 and aarch64) with both mus
 
 Besides the CLI, a standalone WebAssembly version with a photo-realistic GUI is available here: https://dbrll.github.io/ll-34.
 
-`ll-34` is a resource-intensive emulator. Unlike instruction-level emulators, it steps through the microcode one cycle at a time and runs the ALU, combinatorial ROMs, scratchpad, clock generator, and bus timing at each step.
+**Note**: ll-34 is a resource-intensive emulator. Unlike instruction-level emulators, it steps through the microcode one cycle at a time and runs the ALU, combinatorial ROMs, scratchpad, clock generator, and bus timing at each step.
 The host must sustain the 5.5 MHz clock generator pace continuously to remain cycle accurate.
 
-At startup, ll-34 benchmarks itself and reports its speed relative to a real KD11-EA. A ratio below 1x means the host cannot keep up and timing accuracy is not guaranteed. The benchmark is not available in the WebAssembly version, where browser timer resolution makes it unreliable. As the WASM build is slower than native, running it on a smartphone will typically be too slow.
+At startup, the emulator will benchmark itself and reports its speed relative to a real KD11-EA. A ratio below 1x means the host cannot keep up and timing accuracy is not guaranteed. The benchmark is not available in the WebAssembly version, where browser timer resolution makes it unreliable. As the WASM build is slower than native, running it on a smartphone will typically be too slow.
+
