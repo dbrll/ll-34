@@ -69,6 +69,8 @@ After building with `make`, boot an operating system:
 The boot ROM will automatically load from the RK11 and start the operating
 system.  `DIR` will list files, `HELP` will print help, `RUN TETRIS`
 will start the Tetris demo (although the `$TERM` will probably be wrong?).
+`RUN ADVENT` will start the [Colossal Cave Adventure](https://trmm.net/Advent/),
+built on a real PDP-11/34.
 
 
 ### v6 Unix
