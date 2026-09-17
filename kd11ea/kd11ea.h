@@ -7,14 +7,14 @@
 
 #include <stdint.h>
 #include "../unibus/unibus.h"
-#include "combo_roms.h"
+#include "rom_wiring.h"
 #include "clockgen.h"
 #include "int.h"
 #include "debug.h"
 #include "mmu.h"
 
 /* Micro-word field extraction (48-bit, stored in uint64_t).
- * Multi-bit fields have MSB at the LOWEST bit position (reversed).
+ * Multi-bit fields have MSB at the lowest bit position (reversed).
  * ufr() handles the bit reversal. */
 
 #define UB(w, bit)     (((w) >> (bit)) & 1)

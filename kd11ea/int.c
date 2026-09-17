@@ -7,6 +7,7 @@
  */
 
 #include "int.h"
+#include "rom_wiring.h"
 
 void int_init(IntController *ic) {
     ic->count = 0;
@@ -37,16 +38,25 @@ void int_cancel(IntController *ic, uint16_t vector) {
 }
 
 int int_pending(IntController *ic, uint8_t cpu_priority) {
-    int best = -1;
-    uint8_t best_pri = 0;
+    uint8_t br = 0;
     for (int i = 0; i < ic->count; i++) {
-        if (ic->queue[i].priority > cpu_priority &&
-            ic->queue[i].priority > best_pri) {
-            best_pri = ic->queue[i].priority;
-            best = i;
-        }
+        if (ic->queue[i].priority >= 4 && ic->queue[i].priority <= 7)
+            br |= 1u << ic->queue[i].priority;
     }
-    return best;
+
+    uint8_t d = e29_rom[e29_addr(cpu_priority, 0,
+                                  (br >> 7) & 1, (br >> 6) & 1,
+                                  (br >> 5) & 1, (br >> 4) & 1)];
+    uint8_t grant = E29_BG7(d) ? 7 : E29_BG6(d) ? 6 :
+                    E29_BG5(d) ? 5 : E29_BG4(d) ? 4 : 0;
+
+    if (!grant)
+        return -1;
+    for (int i = 0; i < ic->count; i++) {
+        if (ic->queue[i].priority == grant)
+            return i;
+    }
+    return -1;
 }
 
 IntRequest int_ack(IntController *ic, uint8_t cpu_priority) {

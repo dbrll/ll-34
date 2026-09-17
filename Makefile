@@ -19,8 +19,12 @@ SRCS = main.c unibus/unibus.c unibus/ram.c unibus/loader.c \
 
 OBJS = $(SRCS:.c=.o)
 
+ROM_FILES = $(wildcard kd11ea/roms/M8265/*.bin kd11ea/roms/M8266/*.bin)
+ROM_HEADER = kd11ea/roms/rom_images.h
+ROM_GENERATOR = kd11ea/roms/gen_rom_header.c
+
 HEADERS = unibus/unibus.h unibus/ram.h unibus/loader.h trace.h \
-          kd11ea/kd11ea.h kd11ea/combo_roms.h kd11ea/ucode_rom.h kd11ea/clockgen.h kd11ea/clock.h kd11ea/int.h kd11ea/debug.h kd11ea/mmu.h \
+          kd11ea/kd11ea.h kd11ea/rom_wiring.h kd11ea/ucode_rom.h $(ROM_HEADER) kd11ea/clockgen.h kd11ea/clock.h kd11ea/int.h kd11ea/debug.h kd11ea/mmu.h \
           m9301/rom.h m9301/m9301_yf_rom.h \
           dl11/dl11.h \
           rk11/rk11.h \
@@ -34,6 +38,13 @@ HEADERS = unibus/unibus.h unibus/ram.h unibus/loader.h trace.h \
 
 all: $(TARGET)
 
+$(ROM_HEADER): $(ROM_GENERATOR) $(ROM_FILES)
+	$(CC) -std=c11 -O2 -o kd11ea/roms/.gen_rom_header $(ROM_GENERATOR)
+	@trap 'rm -f kd11ea/roms/.gen_rom_header' EXIT; \
+	    kd11ea/roms/.gen_rom_header
+
+roms: $(ROM_HEADER)
+
 $(TARGET): $(OBJS)
 	$(CC) $(LDFLAGS) -o $@ $(OBJS)
 
@@ -41,7 +52,7 @@ $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(OBJS) $(TARGET) kd11ea/roms/.gen_rom_header kd11ea/roms/rom_images.h.tmp
 
 # ----------------------------------------------------------------
 # WebAssembly target  (requires Emscripten: source emsdk/emsdk_env.sh)
@@ -92,4 +103,4 @@ wasm: wasm/ll-34.js
 clean-wasm:
 	rm -f wasm/ll-34.js wasm/ll-34.wasm
 
-.PHONY: all clean wasm clean-wasm
+.PHONY: all clean roms wasm clean-wasm

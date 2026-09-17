@@ -1,41 +1,36 @@
-/*
- * mmu.c: KD11-EA Memory Management Unit
- *
- * The MMU is built into the KD11-EA CPU board.
- * Combinatorial address translation:
- *   K1-6: 3× 74S283 adders compute PBA = (PAF + block_number) << 6 | disp
- *   K1-7: PAR/PDR stored in 8554 RAMs, indexed by mode + page
- *   K1-8: E100 (MS74) = SR0 bit 0 = RELOCATE ENB → E113 → RELOCATE H
- *   Abort logic blocks MSYN and signals KTE to E52 priority encoder
- */
+/* KD11-EA memory management. */
 
 #include <string.h>
 #include "mmu.h"
+#include "rom_wiring.h"
 #include "../trace.h"
 
-/* MMU I/O page register addresses (18-bit PBA).
- * Supervisor regs (772200-772256) respond to avoid NXM but are inactive. */
-#define KS_BLOCK_BASE  0x3F480  /* 772200 */
-#define KS_BLOCK_END   0x3F5FE  /* 772776, covers all kernel/super MMU space */
+/* OC outputs idle high. */
+static uint8_t read_e74_e75(uint32_t pba, uint8_t c1, uint8_t c0,
+                            uint8_t e74)
+{
+    if (!m8265_e54_io_page_enabled(pba) ||
+        !m8265_e81_general_enabled(pba))
+        return 0x0f;
+    return (e74 ? m8265_e74_rom : m8265_e75_rom)
+        [m8265_e74_e75_addr(pba, c1, c0, e74)];
+}
 
-#define KPDR_BASE   0x3F4C0     /* 772300 */
-#define KPDR_END    0x3F4CE     /* 772316, 8 words */
-#define KPAR_BASE   0x3F4E0     /* 772340 */
-#define KPAR_END    0x3F4EE     /* 772356, 8 words */
+static uint8_t read_e76_e77(uint32_t pba, uint8_t c1, uint8_t c0,
+                            uint8_t e76)
+{
+    if (!m8265_e54_io_page_enabled(pba) ||
+        !m8265_e118_par_pdr_enabled(pba))
+        return 0x0f;
+    return (e76 ? m8265_e76_rom : m8265_e77_rom)
+        [m8265_e76_e77_addr(pba, c1, c0)];
+}
 
-/* User PAR/PDR: 777600-777676 */
-#define U_BLOCK_BASE   0x3FF80  /* 777600 */
-#define U_BLOCK_END    0x3FFBE  /* 777676 */
-
-#define UPDR_BASE   0x3FF80     /* 777600 */
-#define UPDR_END    0x3FF8E     /* 777616, 8 words */
-#define UPAR_BASE   0x3FFA0     /* 777640 */
-#define UPAR_END    0x3FFAE     /* 777656, 8 words */
-
-/* Status registers: 777572-777576 (18-bit PBA) */
-#define SR0_ADDR    0x3FF7A     /* 777572 */
-#define SR1_ADDR    0x3FF7C     /* 777574, not implemented, reads 0 */
-#define SR2_ADDR    0x3FF7E     /* 777576 */
+static unsigned apr_index(uint32_t pba)
+{
+    /* PBA08 selects the register set. */
+    return (((pba >> 8) & 1) << 3) | ((pba >> 1) & 7);
+}
 
 
 void mmu_init(MMU *mmu) {
@@ -43,8 +38,7 @@ void mmu_init(MMU *mmu) {
 }
 
 
-/* Address translation (K1-6 adders: E45/E40/E47).
- * PBA = ((PAF + block) << 6) | displacement */
+/* PBA = ((PAF + block) << 6) | displacement. */
 
 int mmu_translate(MMU *mmu, uint16_t vba, int mode, int access,
                   uint16_t pc, uint32_t *pba_out)
@@ -73,37 +67,27 @@ int mmu_translate(MMU *mmu, uint16_t vba, int mode, int access,
     int plf = (pdr & PDR_PLF_MASK) >> PDR_PLF_SHIFT;
     int ed  = (pdr & PDR_ED) ? 1 : 0;
 
-    if (acf == ACF_NON_RESIDENT || acf == ACF_UNUSED) {
-        if (!(mmu->sr0 & SR0_ABORT_MASK)) {
-            mmu->sr0 |= SR0_ABORT_NR | ((mode & 3) << 5) | (page << 1);
-        }
-        trace("[MMU] ABORT NR: VBA=%06o page=%d mode=%d acf=%d PC=%06o\n",
-              vba, page, mode, acf, pc);
-        return -1;
-    }
 
-    if (acf == ACF_READ_ONLY && access) {
-        if (!(mmu->sr0 & SR0_ABORT_MASK)) {
-            mmu->sr0 |= SR0_ABORT_RO | ((mode & 3) << 5) | (page << 1);
-        }
-        return -1;
-    }
+    int compare = block > plf || (ed && block == plf);
+    int illegal_mode = ((mode >> 1) ^ mode) & 1;
+    uint8_t e83 = m8265_e83_rom[m8265_e83_addr(
+        access ? 1 : 0, 0, 1, illegal_mode, acf, compare, ed)];
+    uint16_t aborts = 0;
 
-    /* Page length check */
-    if (ed == 0) {
-        if (block > plf) {
-            if (!(mmu->sr0 & SR0_ABORT_MASK)) {
-                mmu->sr0 |= SR0_ABORT_PL | ((mode & 3) << 5) | (page << 1);
-            }
-            return -1;
-        }
-    } else {
-        if (block < plf) {
-            if (!(mmu->sr0 & SR0_ABORT_MASK)) {
-                mmu->sr0 |= SR0_ABORT_PL | ((mode & 3) << 5) | (page << 1);
-            }
-            return -1;
-        }
+    if (M8265_E83_NR(e83))
+        aborts |= SR0_ABORT_NR;
+    if (M8265_E83_PL(e83))
+        aborts |= SR0_ABORT_PL;
+    if (M8265_E83_RO(e83))
+        aborts |= SR0_ABORT_RO;
+
+    if (aborts) {
+        /* SR0 keeps flags from the fault. */
+        if (!(mmu->sr0 & SR0_ABORT_MASK))
+            mmu->sr0 |= aborts | ((mode & 3) << 5) | (page << 1);
+        trace("[MMU] ABORT: VBA=%06o page=%d mode=%d acf=%d flags=%06o PC=%06o\n",
+              vba, page, mode, acf, aborts, pc);
+        return -1;
     }
 
     if (access)
@@ -116,56 +100,25 @@ int mmu_translate(MMU *mmu, uint16_t vba, int mode, int access,
 }
 
 
-/* MMU register bus interface */
+/* Register decode ROMs. */
 
 int mmu_read(void *dev, uint32_t addr, uint16_t *data)
 {
     MMU *mmu = (MMU *)dev;
-    addr &= 0x3FFFF;
+    uint8_t d;
 
-    /* Kernel PAR 0-7 */
-    if (addr >= KPAR_BASE && addr <= KPAR_END) {
-        int idx = (addr - KPAR_BASE) >> 1;
-        *data = mmu->par[idx];
+    addr &= 0x3ffff;
+
+    d = read_e76_e77(addr, 0, 0, 1); /* DATI */
+    if (!M8265_E76_PAR_PDR_L(d)) {
+        unsigned idx = apr_index(addr);
+        *data = M8265_E76_KT_MUX_S0_L(d) ? mmu->par[idx] : mmu->pdr[idx];
         return 0;
     }
 
-    /* Kernel PDR 0-7 */
-    if (addr >= KPDR_BASE && addr <= KPDR_END) {
-        int idx = (addr - KPDR_BASE) >> 1;
-        *data = mmu->pdr[idx];
-        return 0;
-    }
-
-    /* User PAR 0-7 */
-    if (addr >= UPAR_BASE && addr <= UPAR_END) {
-        int idx = 8 + ((addr - UPAR_BASE) >> 1);
-        *data = mmu->par[idx];
-        return 0;
-    }
-
-    /* User PDR 0-7 */
-    if (addr >= UPDR_BASE && addr <= UPDR_END) {
-        int idx = 8 + ((addr - UPDR_BASE) >> 1);
-        *data = mmu->pdr[idx];
-        return 0;
-    }
-
-    /* SR0 */
-    if (addr == SR0_ADDR) {
-        *data = mmu->sr0;
-        return 0;
-    }
-
-    /* SR1: not implemented on KD11-EA */
-    if (addr == SR1_ADDR) {
-        *data = 0;
-        return 0;
-    }
-
-    /* SR2 */
-    if (addr == SR2_ADDR) {
-        *data = mmu->sr2;
+    d = read_e74_e75(addr, 0, 0, 1); /* DATI */
+    if (!M8265_E74_INT_SSYN_L(d)) {
+        *data = M8265_E74_KT_MUX_S0_L(d) ? mmu->sr0 : mmu->sr2;
         return 0;
     }
 
@@ -176,57 +129,39 @@ int mmu_read(void *dev, uint32_t addr, uint16_t *data)
 int mmu_write(void *dev, uint32_t addr, uint16_t data, int is_byte)
 {
     MMU *mmu = (MMU *)dev;
-    addr &= 0x3FFFF;
-    (void)is_byte;  /* PAR/PDR are word-only in practice */
-    /* Kernel PAR 0-7 */
-    if (addr >= KPAR_BASE && addr <= KPAR_END) {
-        int idx = (addr - KPAR_BASE) >> 1;
-        mmu->par[idx] = data & 0x0FFF;  /* 12-bit PAF */
-        trace("[MMU] KPAR%d <- %06o\n", idx, mmu->par[idx]);
+    uint8_t c0 = is_byte ? 1 : 0;
+    uint8_t d;
+
+    addr &= 0x3ffff;
+
+    d = read_e76_e77(addr, 1, c0, 0); /* DATO/DATOB */
+    if (!M8265_E77_LOAD_PAR_HIGH_L(d) ||
+        !M8265_E77_LOAD_PAR_LOW_L(d)) {
+        unsigned idx = apr_index(addr);
+        mmu->par[idx] = data & 0x0fff;
+        trace("[MMU] %cPAR%u <- %06o\n", idx < 8 ? 'K' : 'U',
+              idx & 7, mmu->par[idx]);
         return 0;
     }
-
-    /* Kernel PDR 0-7 */
-    if (addr >= KPDR_BASE && addr <= KPDR_END) {
-        int idx = (addr - KPDR_BASE) >> 1;
+    if (!M8265_E77_LOAD_PDR_HIGH_L(d) ||
+        !M8265_E77_LOAD_PDR_LOW_L(d)) {
+        unsigned idx = apr_index(addr);
         mmu->pdr[idx] = data & PDR_WR_MASK;
-        trace("[MMU] KPDR%d <- %06o (ACF=%d ED=%d PLF=%03o)\n",
-              idx, mmu->pdr[idx], (mmu->pdr[idx] >> 1) & 3,
-              (mmu->pdr[idx] >> 3) & 1, (mmu->pdr[idx] >> 8) & 0x7F);
+        trace("[MMU] %cPDR%u <- %06o (ACF=%d ED=%d PLF=%03o)\n",
+              idx < 8 ? 'K' : 'U', idx & 7, mmu->pdr[idx],
+              (mmu->pdr[idx] >> 1) & 3, (mmu->pdr[idx] >> 3) & 1,
+              (mmu->pdr[idx] >> 8) & 0x7f);
         return 0;
     }
 
-    /* User PAR 0-7 */
-    if (addr >= UPAR_BASE && addr <= UPAR_END) {
-        int idx = 8 + ((addr - UPAR_BASE) >> 1);
-        mmu->par[idx] = data & 0x0FFF;
-        return 0;
-    }
-
-    /* User PDR 0-7 */
-    if (addr >= UPDR_BASE && addr <= UPDR_END) {
-        int idx = 8 + ((addr - UPDR_BASE) >> 1);
-        mmu->pdr[idx] = data & PDR_WR_MASK;
-        return 0;
-    }
-
-    /* SR0: writable bits 15:13, 8, 0 */
-    if (addr == SR0_ADDR) {
-        uint16_t writable = 0xE101;  /* bits 15:13 + 8 + 0 */
+    d = read_e74_e75(addr, 1, c0, 0); /* DATO/DATOB */
+    if (!M8265_E75_LOAD_SR0_HIGH_L(d) ||
+        !M8265_E75_LOAD_SR0_LOW_L(d)) {
+        uint16_t writable = 0xe101; /* bits 15:13 + 8 + 0 */
         mmu->sr0 = (mmu->sr0 & ~writable) | (data & writable);
-        trace("[MMU] SR0 <- %06o (MMU %s)\n",
-              mmu->sr0, (mmu->sr0 & SR0_ENABLE) ? "ON" : "OFF");
-
-        return 0;
+        trace("[MMU] SR0 <- %06o (MMU %s)\n", mmu->sr0,
+              (mmu->sr0 & SR0_ENABLE) ? "ON" : "OFF");
     }
-
-    /* SR1: not implemented, ignore writes */
-    if (addr == SR1_ADDR)
-        return 0;
-
-    /* SR2: read-only */
-    if (addr == SR2_ADDR)
-        return 0;
 
     return 0;
 }

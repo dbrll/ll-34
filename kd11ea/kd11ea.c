@@ -403,7 +403,7 @@ uint32_t kd11ea_ustep(KD11EA *cpu) {
         }
     }
 
-    uint64_t uw = ucode_rom[cpu->mpc];
+    uint64_t uw = ucode_read(cpu->mpc);
     int nxm_abort = 0;  /* NXM: abort instruction, force MPC->000 */
 
     trace("MPC=%03o  uw=%012llX", cpu->mpc, (unsigned long long)uw);
@@ -841,8 +841,6 @@ uint32_t kd11ea_ustep(KD11EA *cpu) {
     /* Resolve spa_dst after LOAD_BA (write-side uses end-of-cycle BA) */
     uint8_t spa_dst = spa_resolve(cpu, spa_dst_sel, uw);
 
-    /* Scratchpad write, gated by ENAB GR L (E86 ROM, K1-10).
-     * E86 suppresses write when BA >= 0x10 (outside register space). */
     uint8_t amux_sel = (~amux_l) & 3;
     uint8_t suppress_load_ir_psw = (misc == MISC_LOAD_IR || misc == MISC_LOAD_PSW);
     uint8_t is_dato = buf_dat_tran && (bus_ctl == BUS_DATO || bus_ctl == BUS_DATOB);
