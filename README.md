@@ -7,12 +7,12 @@ Circuit-level (ROM truth tables + combinatorial logic) was chosen over gate-leve
 
 ## Architecture
 
-The virtual CPU replicates the clock generator, logic gates and ALU (simulated in C logic), stepping through the original microcode dumped from the ROMs.
+The virtual CPU (`kd11ea/`) replicates the clock generator, logic gates and ALU (simulated in C logic), stepping through the original microcode dumped from the ROMs.
 It is composed of the following components:
 
 | File           | Description                                                                                                                |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `roms/`        | ROM dumps (combinational and microcode). See `roms/README.md`                                                              |
+| `roms/`        | ROM dumps (combinational and microcode).                                                              |
 | `kd11ea.c`     | CPU core. Steps through the microcode one micro-word per cycle. The 74xx gates and 74S181 bit-slice ALUs are modeled here. |
 | `rom_wiring.h` | Address wiring and output decoding for the combinatorial ROMs.                                                             |
 | `ucode_rom.h`  | Documents and assembles the CPU microcode into 512×48-bit micro-words.                                                     |
