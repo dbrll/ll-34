@@ -9,19 +9,19 @@ Circuit-level (ROM truth tables + combinatorial logic) was chosen over gate-leve
 
 The source tree is organized as follows:
 
-| Directory    | Description                                                                                                   |
-| ------------ | ------------------------------------------------------------------------------------------------------------- |
+| Directory    | Description                                                                                                                         |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `pdp11/`     | The machine: CPU, UNIBUS, peripherals, boot ROM, programmer console model, logic analyzer probe. `machine.c` assembles and runs it. |
-| `frontends/` | User interfaces: `cli/` (terminal), `wasm/` (browser GUI), `tty/` (host side of the serial line).            |
-| `demos/`     | Disk images and programs.                                                                                     |
-| `docs/`      | DEC documentation.                                                                                            |
+| `frontends/` | User interfaces: `cli/` (terminal), `wasm/` (browser GUI), `tty/` (host side of the serial line).                                   |
+| `demos/`     | Disk images and programs.                                                                                                           |
+| `docs/`      | DEC documentation.                                                                                                                  |
 
 The virtual CPU (`pdp11/kd11ea/`) replicates the clock generator, logic gates and ALU (simulated in C logic), stepping through the original microcode dumped from the ROMs.
 It is composed of the following components:
 
 | File           | Description                                                                                                                |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `roms/`        | ROM dumps (combinational and microcode).                                                              |
+| `roms/`        | ROM dumps (combinational and microcode).                                                                                   |
 | `kd11ea.c`     | CPU core. Steps through the microcode one micro-word per cycle. The 74xx gates and 74S181 bit-slice ALUs are modeled here. |
 | `rom_wiring.h` | Address wiring and output decoding for the combinatorial ROMs.                                                             |
 | `ucode_rom.h`  | Documents and assembles the CPU microcode into 512×48-bit micro-words.                                                     |
@@ -70,11 +70,22 @@ The Debug Console provides an interactive debugger for both microcode-level and 
 - `mmu`: show MMU state (kernel + user PAR/PDR, current mode marked)
 - `r`: register dump
 
+<figure>
+<p align="center">
+<img width="1650" height="532" alt="ll-34's debug console" src="https://github.com/user-attachments/assets/302479c6-9e11-4456-8ae8-42353e626938" />
+<figcaption>
+</p>   
+<p align="center">
+<i>Debug console in the Web Assembly GUI.</i></figcaption>
+</p>
+</figcaption>
+</figure>
+
 ## Logic Analyzer (Ctrl-L)
 
-Troubleshooting ll-34 during its development turned out to be so similar to troubleshooting the real hardware that an internal logic analyzer was implemented to trace the signals and probe the datapath. This proved instrumental in tracking down subtle ROM and timing bugs in the virtual CPU. It can also be used as a reference to troubleshoot the real hardware, just like the working hardware helped to develop the emulator.
+Troubleshooting ll-34 during its development turned out to be so similar to troubleshooting the real hardware that an internal logic analyzer was implemented to trace the signals and probe the datapath. This proved instrumental in tracking down subtle ROM and timing bugs in the virtual CPU.
 
-The logic analyzer allows the probing of 102 points on major CPU signals, mapped to physical chip pins (KD1:Exx:pin notation matching the DEC schematics K1-5 through K2-9). Logical aliases (MPC, ALU_OUT, IR, PSW…) are provided for convenience.
+The logic analyzer allows the probing of 107 signals, including 72 from the DEC schematics, 31 composite signals (registers, buses and flags), and 4 timing values from the emulator. Future versions will allow the capture of most signals from the schematics.
 
 Sample rate is the real-time CPU clock (5,555,556 Hz) with a resolution of 180 ns per sample. A configurable divider reduces the sample rate for longer capture windows.
 
@@ -86,9 +97,10 @@ Captures use a ring buffer (up to 64K samples) with configurable trigger on any 
 <figcaption>
 </p>   
 <p align="center">
-<i>Logic captures were used liberally throughout the project to map and debug poorly understood multiplexing paths.</i></figcaption>
+<i>ll-34’s logic analyzer (bottom) can be used to troubleshoot the real hardware (top), just as the real hardware was used to troubleshoot ll-34.</i></figcaption>
 </p>
 </figcaption>
+<img width="1699" height="598" alt="ll-34's logic analyzer" src="https://github.com/user-attachments/assets/f4ed3018-5c5a-47db-a2de-bb2f127fffd1" />
 </figure>
 
 ## Sample Programs
