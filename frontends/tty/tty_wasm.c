@@ -1,5 +1,5 @@
 /*
- * tty/tty_wasm.c -- WebAssembly TTY backend for ll-34
+ * frontends/tty/tty_wasm.c -- WebAssembly TTY backend for ll-34
  *
  * RX/TX circular queues between JS and the DL11 emulation.
  */

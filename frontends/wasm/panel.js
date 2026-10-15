@@ -3,7 +3,7 @@
  *
  * All coordinates are in pixels relative to panel.jpg (2006 x 1074).
  * The JavaScript UI converts them to CSS percentages at runtime so
- * the panel scales cleanly to any window width.
+ * the panel scales with the window width.
  *
  * To adjust button/LED positions: edit the x,y values below, reload.
  * Enable PANEL_DEBUG = true to show coordinate crosshairs on click.
@@ -14,7 +14,7 @@ const PANEL_IMG_H = 1074;
 const PANEL_DEBUG = true; /* set true to click-calibrate positions */
 
 /* ----------------------------------------------------------------
- * KEY_* enum — must stay in sync with console/console.h
+ * KEY_* enum, must match ky11/console.h
  * ---------------------------------------------------------------- */
 const KEY = {
   K0: 0,
@@ -46,7 +46,7 @@ const KEY = {
 const POWER_BTN = { x: 1573, y: 779, w: 198, h: 153 };
 
 /* ----------------------------------------------------------------
- * 7-segment display region — top-left (840,709) bottom-right (1072,736)
+ * 7-segment display region: top-left (840,709), bottom-right (1072,736)
  * ---------------------------------------------------------------- */
 const DISPLAY = { x: 836, y: 706, w: 240, h: 34 };
 
@@ -130,9 +130,9 @@ const BUTTONS = [
 /* ----------------------------------------------------------------
  * Audio configuration
  *
- * clicks.mp3  : multiple button click sounds end-to-end.
- *   segments[] : {start, end} in seconds for each individual click.
- *   One is chosen at random on each button press.
+ * keys.mp3    : several button clicks recorded back to back.
+ *   segments[] : {start, end} in seconds for each click.
+ *   One is picked at random on each button press.
  *
  * run.mp3     : recording of power-on / running / power-off.
  *   intro_end  : seconds where intro ends and run-loop begins.
@@ -151,8 +151,8 @@ const AUDIO = {
   },
   power: {
     file: "assets/run.mp3",
-    skip: 0.55 /* skip initial silence before the "clac" */,
-    intro_end: 6.1 /* 5 s — fin de l'intro, début du run en boucle */,
-    loop_end: 9.3 /* 9.43 s — début de l'extinction */,
+    skip: 0.55 /* skip the initial silence */,
+    intro_end: 6.1 /* end of power-on, start of the run loop */,
+    loop_end: 9.3 /* start of power-off */,
   },
 };

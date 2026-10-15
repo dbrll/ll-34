@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "unibus.h"
-#include "trace.h"
+#include "../trace.h"
 
 void bus_init(Bus *bus) {
     memset(bus, 0, sizeof(*bus));

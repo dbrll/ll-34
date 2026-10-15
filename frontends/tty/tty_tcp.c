@@ -1,5 +1,5 @@
 /*
- * tty/tty_tcp.c -- TCP server TTY backend for ll-34
+ * frontends/tty/tty_tcp.c -- TCP server TTY backend for ll-34
  *
  * One client at a time, default port 1134. Connect with: nc localhost 1134
  */

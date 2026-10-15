@@ -7,7 +7,16 @@ Circuit-level (ROM truth tables + combinatorial logic) was chosen over gate-leve
 
 ## Architecture
 
-The virtual CPU (`kd11ea/`) replicates the clock generator, logic gates and ALU (simulated in C logic), stepping through the original microcode dumped from the ROMs.
+The source tree is organized as follows:
+
+| Directory    | Description                                                                                                   |
+| ------------ | ------------------------------------------------------------------------------------------------------------- |
+| `pdp11/`     | The machine: CPU, UNIBUS, peripherals, boot ROM, programmer console model, logic analyzer probe. `machine.c` assembles and runs it. |
+| `frontends/` | User interfaces: `cli/` (terminal), `wasm/` (browser GUI), `tty/` (host side of the serial line).            |
+| `demos/`     | Disk images and programs.                                                                                     |
+| `docs/`      | DEC documentation.                                                                                            |
+
+The virtual CPU (`pdp11/kd11ea/`) replicates the clock generator, logic gates and ALU (simulated in C logic), stepping through the original microcode dumped from the ROMs.
 It is composed of the following components:
 
 | File           | Description                                                                                                                |
@@ -89,7 +98,7 @@ ll-34 comes with a few programs and systems to try: a Game of Life, V6 UNIX, RT-
 ### RT-11
 
 ```
-./ll-34 --rk ./wasm/demos/rtv4_rk.dsk
+./ll-34 --rk ./demos/rtv4_rk.dsk
 ```
 
 The boot ROM will automatically load from the RK11 and start the operating
@@ -101,7 +110,7 @@ built on a real PDP-11/34.
 ### v6 UNIX
 
 ```
-./ll-34 --rk ./wasm/demos/v6bin.rk
+./ll-34 --rk ./demos/v6bin.rk
 ```
 
 The bootloader will print a minimal `@` prompt. Type `rkunix` and
@@ -114,6 +123,8 @@ One note is that `cd` is named `chdir` in early UNIX.
 `make` + a C11 compiler, there are no other dependencies.
 
 Verified to compile with no warnings on Linux (x86_64 and aarch64) with both musl and glibc, macOS aarch64, and NetBSD 10 aarch64.
+
+`make wasm` builds the WebAssembly version (requires Emscripten). `frontends/wasm/serve.sh` serves it on http://localhost:1134, and `frontends/wasm/deploy-pages.sh` publishes it on the `gh-pages` branch.
 
 ## Running
 

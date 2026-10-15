@@ -1,0 +1,4286 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>ll/34 (WASM GUI)</title>
+
+        <!-- xterm.js -->
+        <link
+            rel="stylesheet"
+            href="https://cdn.jsdelivr.net/npm/xterm@5/css/xterm.css"
+        />
+        <script src="https://cdn.jsdelivr.net/npm/xterm@5/lib/xterm.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8/lib/xterm-addon-fit.js"></script>
+
+        <!-- Monospace UI font -->
+        <link
+            rel="stylesheet"
+            href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5/400.css"
+        />
+
+        <!-- 7-segment display font (local) -->
+        <style>
+            @font-face {
+                font-family: "DSEG7Classic";
+                src: url("assets/DSEG7Classic-Italic.woff2") format("woff2");
+                font-weight: normal;
+                font-style: italic;
+            }
+            @font-face {
+                font-family: "VT220";
+                src: url("assets/VT220.ttf") format("truetype");
+                font-weight: normal;
+                font-style: normal;
+            }
+        </style>
+
+        <style>
+            * {
+                box-sizing: border-box;
+                margin: 0;
+                padding: 0;
+            }
+            :root {
+                --mono: "Fira Code", "JetBrains Mono", Menlo, Consolas,
+                    monospace;
+                --mono-size: 13px;
+            }
+            html {
+                background: #000;
+                height: 100%;
+                overflow-x: hidden;
+            }
+            body {
+                background: #000;
+                color: #e6edf3;
+                font-family: "Segoe UI", system-ui, sans-serif;
+                min-height: 100%;
+                height: auto;
+                overflow-y: auto;
+                overflow-x: hidden;
+                display: flex;
+                flex-direction: column;
+            }
+
+            /* Front panel */
+            #panel-wrap {
+                position: relative;
+                width: 100%;
+                flex-shrink: 0;
+                line-height: 0;
+                cursor: default;
+            }
+            #panel-img {
+                width: 100%;
+                display: block;
+                user-select: none;
+                -webkit-user-drag: none;
+            }
+            #panel-overlay {
+                position: absolute;
+                inset: 0;
+            }
+
+            /* Power button ON overlay */
+            #power-btn-on {
+                position: absolute;
+                pointer-events: none;
+                opacity: 0;
+                transition: opacity 0.25s ease;
+            }
+            #power-btn-on.visible {
+                opacity: 1;
+            }
+
+            /* Clickable power zone */
+            #power-zone {
+                position: absolute;
+                cursor: pointer;
+                border-radius: 50%;
+            }
+
+            /* 7-segment display */
+            #seg-display {
+                position: absolute;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                pointer-events: none;
+                overflow: hidden;
+                background: 392b2a;
+                border-radius: 2px;
+            }
+            .seg-cell {
+                position: relative;
+                display: inline-block;
+            }
+            .seg-ghost {
+                font-family: "DSEG7Classic", monospace;
+                font-style: italic;
+                color: #463032;
+                letter-spacing: 0.77em;
+                margin-right: -1em; /* cancel trailing letter-spacing */
+                font-size: 1em;
+                pointer-events: none;
+                user-select: none;
+            }
+            .seg-value {
+                font-family: "DSEG7Classic", monospace;
+                font-style: italic;
+                color: #cc1100;
+                text-shadow:
+                    0 0 3px #ff2200,
+                    0 0 7px #aa0000;
+                letter-spacing: 0.77em;
+                font-size: 1em;
+                position: absolute;
+                left: 0;
+                top: 0;
+            }
+            .seg-value.off {
+                color: transparent;
+                text-shadow: none;
+            }
+
+            /* LED indicators */
+            .led-dot {
+                position: absolute;
+                border-radius: 50%;
+                background: transparent;
+                pointer-events: none;
+                transition:
+                    background 0.12s,
+                    box-shadow 0.12s;
+            }
+            .led-dot.on {
+                background: #ff3300;
+                box-shadow:
+                    0 0 4px 2px #ff2200,
+                    0 0 10px 3px #cc1100;
+            }
+
+            /* Panel buttons (invisible hit areas) */
+            .panel-btn {
+                position: absolute;
+                background: transparent;
+                border: none;
+                cursor: pointer;
+                padding: 0;
+                transform: translate(-50%, -50%);
+                border-radius: 3px;
+                -webkit-tap-highlight-color: transparent;
+            }
+            .panel-btn.pressed {
+                box-shadow: 0 0 12px 6px rgba(200, 200, 200, 0.6);
+                border-radius: 50%;
+            }
+            /* CNTRL key latched (sticky modifier) */
+            .panel-btn.active {
+                /*background: rgba(255, 120, 0, 0.35);*/
+                box-shadow: 0 0 12px 6px rgba(200, 200, 200, 0.6);
+                border-radius: 50%;
+            }
+            /* Debug overlay: show button outlines
+    .panel-btn.debug-vis {
+      background: rgba(255, 200, 0, 0.25);
+      border: 1px solid rgba(255, 200, 0, 0.7);
+    }
+    */
+
+            /* Bottom section: tabs + terminal */
+            /* Bottom pane: one fixed height for every tab, set with the
+             * handle above the tab bar (default: 25 VT100 lines) */
+            #bottom {
+                flex: none;
+                height: 600px;
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+                background: #0d1117;
+            }
+            #bottom-resize {
+                flex: 0 0 6px;
+                cursor: row-resize;
+                background: #161b22;
+                border-top: 1px solid #30363d;
+            }
+            #bottom-resize:hover,
+            #bottom-resize.dragging {
+                background: #30363d;
+            }
+            #tabs {
+                display: flex;
+                gap: 0;
+                background: #161b22;
+                border-bottom: 1px solid #30363d;
+                flex-shrink: 0;
+            }
+            .tab-btn {
+                padding: 7px 20px;
+                background: none;
+                border: none;
+                border-bottom: 2px solid transparent;
+                color: #8b949e;
+                font-size: 0.8rem;
+                cursor: pointer;
+                transition:
+                    color 0.15s,
+                    border-color 0.15s;
+            }
+            .tab-btn:hover {
+                color: #e6edf3;
+            }
+            .tab-btn.active {
+                color: #58a6ff;
+                border-bottom-color: #58a6ff;
+            }
+            .tab-panel {
+                display: none;
+                flex: 1;
+                min-height: 0;
+            }
+            .tab-panel.active {
+                display: flex;
+                flex-direction: column;
+            }
+
+            /* Docs tab */
+            .docs-layout {
+                display: flex;
+                flex: 1;
+                min-height: 0;
+            }
+            .docs-nav {
+                display: flex;
+                flex-direction: column;
+                width: 140px;
+                min-width: 140px;
+                border-right: 1px solid #30363d;
+                padding: 8px 0;
+                gap: 2px;
+            }
+            .docs-nav-btn {
+                background: none;
+                border: none;
+                cursor: pointer;
+                text-align: left;
+                padding: 8px 16px;
+                color: #8b949e;
+                font-size: 12px;
+                font-family: inherit;
+                border-left: 2px solid transparent;
+                transition:
+                    color 0.12s,
+                    border-color 0.12s,
+                    background 0.12s;
+            }
+            .docs-nav-btn:hover {
+                color: #e6edf3;
+                background: rgba(255, 255, 255, 0.04);
+            }
+            .docs-nav-btn.active {
+                color: #58a6ff;
+                border-left-color: #58a6ff;
+                background: rgba(88, 166, 255, 0.06);
+            }
+            .docs-content {
+                flex: 1;
+                min-width: 0;
+                overflow-y: auto;
+                padding: 20px 28px;
+            }
+            .docs-page {
+                display: none;
+            }
+            .docs-page.active {
+                display: block;
+            }
+            .docs-page h2 {
+                color: #e6edf3;
+                font-size: 16px;
+                margin: 0 0 12px 0;
+                padding-bottom: 8px;
+                border-bottom: 1px solid #30363d;
+            }
+            .docs-page p,
+            .docs-page li {
+                color: #c9d1d9;
+                font-size: 13px;
+                line-height: 1.6;
+            }
+            .docs-page code {
+                background: #161b22;
+                padding: 2px 6px;
+                border-radius: 3px;
+                font-size: 12px;
+                color: #79c0ff;
+            }
+            .docs-page pre {
+                background: #161b22;
+                padding: 12px;
+                border-radius: 6px;
+                overflow-x: auto;
+                font-size: 12px;
+                color: #c9d1d9;
+            }
+            .docs-page h3 {
+                color: #e6edf3;
+                font-size: 14px;
+                margin: 18px 0 8px 0;
+            }
+            .docs-page ul {
+                padding-left: 20px;
+            }
+            .docs-page a {
+                color: #58a6ff;
+                text-decoration: none;
+            }
+            .docs-page a:hover {
+                text-decoration: underline;
+            }
+
+            /* Console tab */
+            #tab-console {
+                padding: 4px;
+            }
+            #terminal {
+                flex: 1;
+            }
+
+            /* Debug tab */
+            #tab-debug {
+                flex-direction: column;
+                padding: 0;
+                font-family: var(--mono);
+                font-size: var(--mono-size);
+                color: #c9d1d9;
+                overflow: hidden;
+            }
+            .dbg-main {
+                display: flex;
+                flex-direction: column;
+                flex: 1;
+                min-width: 0;
+                min-height: 0;
+                overflow: hidden;
+            }
+            .dbg-toolbar {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                padding: 4px 8px;
+                background: #161b22;
+                border-bottom: 1px solid #30363d;
+                flex-shrink: 0;
+                flex-wrap: wrap;
+            }
+            .dbg-btn {
+                background: #21262d;
+                border: 1px solid #30363d;
+                color: #c9d1d9;
+                padding: 3px 10px;
+                cursor: pointer;
+                font-size: 13px;
+                font-family: inherit;
+                border-radius: 3px;
+            }
+            .dbg-btn:hover {
+                background: #2d333b;
+                border-color: #58a6ff;
+            }
+            .dbg-btn:active {
+                background: #161b22;
+            }
+            .dbg-btn.dbg-pause {
+                color: #f85149;
+            }
+            .dbg-btn.dbg-resume {
+                color: #3fb950;
+            }
+            .dbg-btn.dbg-step {
+                color: #d2a8ff;
+            }
+            .dbg-status-text {
+                color: #8b949e;
+                font-size: 13px;
+            }
+            .dbg-status-text.running {
+                color: #3fb950;
+            }
+            .dbg-status-text.halted {
+                color: #f85149;
+            }
+            #dbg-sub-debug {
+                position: relative;
+            }
+            #dbg-disasm {
+                overflow: hidden;
+            }
+            /* While the CPU runs, panels show the last stop, greyed out */
+            #dbg-sub-debug.running .dbg-col-regs pre,
+            #dbg-sub-debug.running #dbg-disasm,
+            #dbg-sub-debug.running #dbg-mem {
+                opacity: 0.4;
+            }
+            #dbg-time-txt {
+                min-width: 18ch;
+                font-variant-numeric: tabular-nums;
+            }
+            .dbg-find-msg {
+                color: #f0883e;
+            }
+            #dbg-mem .hit {
+                background: #f0883e;
+                color: #0d1117;
+            }
+            #dbg-off {
+                display: none;
+                position: absolute;
+                inset: 0;
+                z-index: 5;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                gap: 10px;
+                background: rgba(13, 17, 23, 0.85);
+                color: #8b949e;
+                text-align: center;
+            }
+            #dbg-off .title {
+                color: #f85149;
+                font-size: 1.4em;
+                letter-spacing: 2px;
+            }
+            #dbg-sub-debug.off #dbg-off {
+                display: flex;
+            }
+            .dbg-subpanel {
+                display: none;
+                flex: 1;
+                min-height: 0;
+                overflow: hidden;
+            }
+            .dbg-subpanel.active {
+                display: flex;
+                flex-direction: column;
+            }
+            /* Panels */
+            .dbg-panel-hdr {
+                background: #161b22;
+                border-bottom: 1px solid #30363d;
+                padding: 3px 6px;
+                font-size: 12px;
+                color: #6e7681;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+                flex-shrink: 0;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
+            .dbg-panel-body {
+                padding: 4px 6px;
+                margin: 0;
+                white-space: pre;
+                font-family: inherit;
+                font-size: inherit;
+                color: #c9d1d9;
+                line-height: 1.4;
+                overflow-y: auto;
+                flex: 1;
+                min-height: 0;
+            }
+            /* Debugger sub-tab: registers on the left, listing on the right */
+            .dbg-debug-cols {
+                display: flex;
+                flex: 1;
+                min-height: 0;
+                overflow: hidden;
+            }
+            .dbg-debug-col {
+                display: flex;
+                flex-direction: column;
+                min-width: 0;
+                min-height: 0;
+                border-right: 1px solid #30363d;
+                overflow: hidden;
+            }
+            .dbg-debug-col:last-child {
+                border-right: none;
+            }
+            .dbg-col-regs {
+                flex: 0 0 400px;
+                overflow-y: auto;
+            }
+            .dbg-sec .dbg-panel-body {
+                flex: none;
+                overflow: visible;
+            }
+            #dbg-micro {
+                white-space: pre-wrap;
+            }
+            .dbg-sec-hdr {
+                cursor: pointer;
+                user-select: none;
+            }
+            .dbg-sec-hdr::before {
+                content: "\25be";
+                width: 1em;
+            }
+            .dbg-sec.collapsed .dbg-sec-hdr::before {
+                content: "\25b8";
+            }
+            .dbg-sec.collapsed .dbg-panel-body {
+                display: none;
+            }
+            .dbg-col-disasm {
+                flex: 1;
+            }
+            /* Code and memory side by side, below the listing toolbar */
+            .dbg-codemem {
+                display: flex;
+                flex: 1;
+                min-height: 0;
+            }
+            .dbg-codemem #dbg-disasm {
+                flex: 1;
+                min-width: 0;
+            }
+            #dbg-mempane {
+                display: flex;
+                flex-direction: column;
+                min-width: 0;
+                flex-shrink: 0;
+            }
+            #dbg-mem {
+                flex: 1;
+                overflow: hidden;
+                padding: 4px 8px;
+            }
+            #dbg-mem .chg {
+                color: #f0c040;
+            }
+            #dbg-mem .na {
+                color: #484f58;
+            }
+            #dbg-mem .ascii {
+                color: #6e7681;
+            }
+            #mem-splitter {
+                flex: 0 0 5px;
+                cursor: col-resize;
+                background: #161b22;
+                border-left: 1px solid #30363d;
+            }
+            #mem-splitter:hover,
+            #mem-splitter.dragging {
+                background: #30363d;
+            }
+            .dbg-codemem.mem-collapsed #mem-splitter,
+            .dbg-codemem.mem-collapsed #dbg-mem,
+            .dbg-codemem.mem-collapsed .mem-ctrl,
+            .dbg-codemem.mem-collapsed .mem-title {
+                display: none;
+            }
+            .dbg-codemem.mem-collapsed #dbg-mempane {
+                width: auto !important;
+                border-left: 1px solid #30363d;
+            }
+            .dbg-codemem.mem-collapsed #dbg-mempane .dbg-listbar {
+                flex: 1;
+                align-items: flex-start;
+            }
+            .pane-toggle {
+                background: none;
+                border: 1px solid #30363d;
+                color: #8b949e;
+                font-family: inherit;
+                font-size: inherit;
+                padding: 0 6px;
+                border-radius: 3px;
+                cursor: pointer;
+            }
+            .pane-toggle:hover {
+                color: #e6edf3;
+                border-color: #58a6ff;
+            }
+            .dbg-listbar select {
+                background: #0d1117;
+                border: 1px solid #30363d;
+                color: #c9d1d9;
+                font-family: inherit;
+                font-size: inherit;
+                border-radius: 3px;
+                padding: 1px 4px;
+            }
+            /* Listing toolbar: go to address, breakpoints */
+            .dbg-listbar {
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 6px 10px;
+                padding: 4px 8px;
+                background: #161b22;
+                border-bottom: 1px solid #30363d;
+                flex-shrink: 0;
+            }
+            .dbg-listbar label {
+                color: #6e7681;
+            }
+            .dbg-listbar input {
+                width: 7.5em;
+                background: #0d1117;
+                border: 1px solid #30363d;
+                color: #c9d1d9;
+                padding: 2px 6px;
+                font-family: inherit;
+                font-size: inherit;
+                border-radius: 3px;
+                outline: none;
+            }
+            .dbg-listbar input:focus {
+                border-color: #58a6ff;
+            }
+            .dbg-listbar .sep {
+                width: 1px;
+                align-self: stretch;
+                background: #30363d;
+            }
+            #dbg-bp-list {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 4px;
+            }
+            .dbg-bp-chip {
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+                padding: 1px 4px 1px 6px;
+                border: 1px solid #30363d;
+                border-radius: 3px;
+                color: #79c0ff;
+                cursor: pointer;
+            }
+            .dbg-bp-chip::before {
+                content: "";
+                width: 0.6em;
+                height: 0.6em;
+                border-radius: 50%;
+                background: #f85149;
+            }
+            .dbg-bp-chip .bp-del {
+                background: none;
+                border: none;
+                color: #8b949e;
+                cursor: pointer;
+                font-size: inherit;
+                padding: 0 2px;
+            }
+            .dbg-bp-chip .bp-del:hover {
+                color: #f85149;
+            }
+            .dbg-hint {
+                margin-left: auto;
+                color: #8b949e;
+            }
+            /* Listing rows */
+            #dbg-disasm {
+                white-space: normal;
+                padding: 4px 0;
+            }
+            .dis-row {
+                display: flex;
+                white-space: pre;
+                cursor: default;
+            }
+            .dis-row:hover {
+                background: #161b22;
+            }
+            .dis-row.sel {
+                background: #1f2a37;
+            }
+            .dis-row.pc {
+                background: #2a2410;
+                color: #f0c040;
+            }
+            .dis-gutter {
+                flex: 0 0 1.6em;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+            }
+            .dis-gutter:hover::before {
+                content: "";
+                width: 0.7em;
+                height: 0.7em;
+                border-radius: 50%;
+                background: #f8514955;
+            }
+            .dis-row.bp .dis-gutter::before {
+                content: "";
+                width: 0.7em;
+                height: 0.7em;
+                border-radius: 50%;
+                background: #f85149;
+            }
+            .dis-mark {
+                flex: 0 0 1.4em;
+            }
+            /* Log panel, right of the VT100 terminal */
+            #tab-console {
+                flex-direction: row;
+            }
+            #terminal {
+                min-width: 0;
+            }
+            #log-splitter {
+                flex: 0 0 5px;
+                cursor: col-resize;
+                background: #161b22;
+                border-left: 1px solid #30363d;
+            }
+            #log-splitter:hover,
+            #log-splitter.dragging {
+                background: #30363d;
+            }
+            #log-panel {
+                display: flex;
+                flex-direction: column;
+                min-width: 0;
+                background: #0d1117;
+                font-family: var(--mono);
+                font-size: var(--mono-size);
+            }
+            #log-panel .dbg-panel-hdr {
+                justify-content: space-between;
+            }
+            #log-toggle {
+                background: none;
+                border: 1px solid #30363d;
+                color: #8b949e;
+                font-family: inherit;
+                font-size: inherit;
+                padding: 0 6px;
+                border-radius: 3px;
+                cursor: pointer;
+            }
+            #log-toggle:hover {
+                color: #e6edf3;
+                border-color: #58a6ff;
+            }
+            .dbg-log-body {
+                color: #8b949e;
+                white-space: pre-wrap;
+            }
+            #tab-console.log-hidden #log-splitter,
+            #tab-console.log-hidden #log-panel .dbg-log-body,
+            #tab-console.log-hidden #log-panel .log-title {
+                display: none;
+            }
+            #tab-console.log-hidden #log-panel {
+                width: auto !important;
+                border-left: 1px solid #30363d;
+            }
+            #tab-console.log-hidden #log-panel .dbg-panel-hdr {
+                flex: 1;
+                align-items: flex-start;
+                padding: 4px;
+            }
+            /* Logic Analyzer tab */
+            #tab-la {
+                flex-direction: column;
+                overflow: hidden;
+                font-family: var(--mono);
+                font-size: var(--mono-size);
+                color: #c9d1d9;
+            }
+            .la-cols {
+                display: flex;
+                flex: 1;
+                min-height: 0;
+                overflow: hidden;
+            }
+            .la-cat {
+                display: flex;
+                flex-direction: column;
+                width: 340px;
+                min-width: 340px;
+                flex-shrink: 0;
+                min-height: 0;
+            }
+            .la-cat .la-col-hdr {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+            }
+            #la-cat-splitter {
+                flex: 0 0 5px;
+                cursor: col-resize;
+                background: #161b22;
+                border-left: 1px solid #30363d;
+                border-right: 1px solid #30363d;
+            }
+            #la-cat-splitter:hover,
+            #la-cat-splitter.dragging {
+                background: #30363d;
+            }
+            /* Folded: a narrow strip with the toggle, the waveforms get the room */
+            .la-cols.cat-hidden .la-cat {
+                width: auto !important;
+                min-width: 0;
+                border-right: 1px solid #30363d;
+            }
+            .la-cols.cat-hidden .la-cat-title,
+            .la-cols.cat-hidden #la-search,
+            .la-cols.cat-hidden .la-siglist,
+            .la-cols.cat-hidden #la-cat-splitter {
+                display: none;
+            }
+            .la-cols.cat-hidden .la-cat .la-col-hdr {
+                flex: 1;
+                align-items: flex-start;
+                padding: 4px;
+            }
+            .la-col-hdr {
+                background: #161b22;
+                border-bottom: 1px solid #30363d;
+                padding: 3px 8px;
+                color: #6e7681;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+                flex-shrink: 0;
+            }
+            #la-search {
+                margin: 6px 8px;
+                flex: none;
+            }
+            .la-siglist {
+                flex: 1;
+                overflow-y: auto;
+                min-height: 0;
+                padding-bottom: 6px;
+            }
+            .la-grp {
+                padding: 6px 8px 2px;
+                color: #8b949e;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            .la-grp-name {
+                margin-left: 8px;
+                color: #6e7681;
+            }
+            .la-sig-row {
+                display: flex;
+                align-items: baseline;
+                gap: 8px;
+                padding: 2px 8px 2px 14px;
+                cursor: pointer;
+                white-space: nowrap;
+            }
+            .la-sig-row:hover {
+                background: #1c2128;
+            }
+            .la-sig-row .mark {
+                flex: 0 0 1em;
+                color: #6e7681;
+            }
+            .la-sig-row.on .mark {
+                color: #3fb950;
+            }
+            .la-sig-row.on .la-sig-name {
+                color: #3fb950;
+            }
+            .la-sig-name {
+                color: #79c0ff;
+            }
+            .la-sig-alias {
+                color: #d2a8ff;
+            }
+            .la-sig-desc {
+                color: #6e7681;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                min-width: 0;
+            }
+            .la-main {
+                display: flex;
+                flex-direction: column;
+                flex: 1;
+                min-width: 0;
+                min-height: 0;
+            }
+            .la-bar,
+            .la-foot {
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 6px 10px;
+                padding: 4px 8px;
+                background: #161b22;
+                border-bottom: 1px solid #30363d;
+                flex-shrink: 0;
+            }
+            .la-foot {
+                border-bottom: none;
+                border-top: 1px solid #30363d;
+            }
+            .la-bar label {
+                color: #6e7681;
+            }
+            .la-bar .sep {
+                width: 1px;
+                align-self: stretch;
+                background: #30363d;
+            }
+            .la-input,
+            .la-bar select {
+                background: #0d1117;
+                border: 1px solid #30363d;
+                color: #c9d1d9;
+                padding: 2px 6px;
+                font-family: inherit;
+                font-size: inherit;
+                border-radius: 3px;
+                outline: none;
+            }
+            .la-input:focus,
+            .la-bar select:focus {
+                border-color: #58a6ff;
+            }
+            .la-ctl {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                white-space: nowrap;
+            }
+            .la-oct {
+                width: 6em;
+            }
+            .la-num {
+                width: 4em;
+            }
+            .la-btn {
+                background: #21262d;
+                border: 1px solid #30363d;
+                color: #c9d1d9;
+                padding: 2px 10px;
+                cursor: pointer;
+                font-family: inherit;
+                font-size: inherit;
+                border-radius: 3px;
+            }
+            .la-btn:hover {
+                background: #2d333b;
+                border-color: #58a6ff;
+            }
+            .la-btn.la-arm {
+                color: #3fb950;
+                border-color: #3fb950;
+            }
+            .la-btn.la-disarm {
+                color: #f85149;
+            }
+            .la-dim {
+                color: #6e7681;
+            }
+            #la-status {
+                color: #8b949e;
+            }
+            #la-status.armed {
+                color: #f0c040;
+            }
+            #la-status.capturing {
+                color: #3fb950;
+            }
+            #la-status.done {
+                color: #79c0ff;
+            }
+            #la-status.error {
+                color: #f85149;
+            }
+            .la-wave {
+                display: flex;
+                flex: 1;
+                min-height: 0;
+                overflow-y: auto;
+                align-items: flex-start;
+            }
+            .la-labels {
+                flex: 0 0 230px;
+                border-right: 1px solid #30363d;
+            }
+            .la-lbl-hdr {
+                height: 24px;
+                border-bottom: 1px solid #30363d;
+            }
+            .la-lbl {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                height: 32px;
+                padding: 0 6px 0 8px;
+                border-bottom: 1px solid #21262d;
+                white-space: nowrap;
+            }
+            .la-lbl .nm {
+                flex: 1;
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                color: #79c0ff;
+            }
+            .la-lbl .val {
+                color: #f0c040;
+            }
+            .la-lbl .rm {
+                visibility: hidden;
+                background: none;
+                border: none;
+                color: #8b949e;
+                cursor: pointer;
+                font-family: inherit;
+                font-size: inherit;
+            }
+            .la-lbl:hover .rm {
+                visibility: visible;
+            }
+            .la-lbl .rm:hover {
+                color: #f85149;
+            }
+            .la-canvas-wrap {
+                flex: 1;
+                min-width: 0;
+            }
+            #la-canvas {
+                display: block;
+                cursor: crosshair;
+            }
+            #la-canvas.dragging {
+                cursor: grabbing;
+            }
+            #la-hscroll {
+                /* right under the last signal, kept in view when the list scrolls */
+                position: sticky;
+                bottom: 0;
+                height: 14px;
+                background: #161b22;
+                border-top: 1px solid #30363d;
+                cursor: pointer;
+            }
+            #la-hthumb {
+                position: absolute;
+                top: 3px;
+                height: 8px;
+                min-width: 24px;
+                border-radius: 4px;
+                background: #484f58;
+                cursor: grab;
+            }
+            #la-hthumb:hover,
+            #la-hthumb.dragging {
+                background: #6e7681;
+            }
+
+            /* Demo selector + sound checkbox */
+            #demo-select {
+                background: none;
+                border: none;
+                border-bottom: 2px solid transparent;
+                color: #8b949e;
+                font-size: 0.8rem;
+                cursor: pointer;
+                padding: 7px 8px;
+                outline: none;
+            }
+            #demo-select:hover {
+                color: #e6edf3;
+            }
+            #demo-select option {
+                background: #161b22;
+                color: #e6edf3;
+            }
+            #sound-label {
+                display: flex;
+                align-items: center;
+                gap: 5px;
+                padding: 7px 14px;
+                color: #8b949e;
+                font-size: 0.8rem;
+                cursor: pointer;
+                user-select: none;
+            }
+            #sound-label:hover {
+                color: #e6edf3;
+            }
+            #sound-label input {
+                cursor: pointer;
+            }
+
+            /* Loading overlay */
+            .loading-overlay {
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, 0.92);
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                gap: 14px;
+                z-index: 200;
+                font-size: 0.9rem;
+                color: #8b949e;
+            }
+            .spinner {
+                width: 32px;
+                height: 32px;
+                border: 3px solid #30363d;
+                border-top-color: #58a6ff;
+                border-radius: 50%;
+                animation: spin 0.8s linear infinite;
+            }
+            @keyframes spin {
+                to {
+                    transform: rotate(360deg);
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="loading-overlay" id="loading">
+            <div class="spinner"></div>
+            <div>Loading KD11-EA microcode…</div>
+        </div>
+
+        <!-- Front panel -->
+        <div id="panel-wrap">
+            <img
+                id="panel-img"
+                src="assets/panel.jpg"
+                alt="PDP-11/34 front panel"
+                draggable="false"
+            />
+            <div id="panel-overlay">
+                <!-- Power button ON state overlay -->
+                <img id="power-btn-on" src="assets/button.png" alt="" />
+                <!-- Power click zone -->
+                <div id="power-zone"></div>
+                <!-- 7-segment display -->
+                <div id="seg-display">
+                    <div class="seg-cell">
+                        <span class="seg-ghost">888888</span>
+                        <span class="seg-value off" id="seg-addr">000000</span>
+                    </div>
+                </div>
+                <!-- LEDs and buttons injected by JS -->
+            </div>
+        </div>
+
+        <!-- Terminal + tabs -->
+        <div id="bottom">
+            <div id="bottom-resize" title="Drag to resize"></div>
+            <div id="tabs">
+                <button class="tab-btn active" data-tab="console">VT100</button>
+                <button class="tab-btn" data-tab="debug">Debug</button>
+                <button class="tab-btn" data-tab="la">Logic Analyzer</button>
+                <button class="tab-btn" data-tab="docs">Usage</button>
+                <div style="flex: 1"></div>
+                <select id="demo-select">
+                    <option value="" disabled selected>&#9662; Programs</option>
+                    <option value="0">Default (ODT)</option>
+                    <option value="1">ATTN/11</option>
+                    <option value="2">Game of Life</option>
+                    <option value="3">RT11 V4</option>
+                    <option value="4">V6 UNIX</option>
+                    <option value="5">Xortran</option>
+                </select>
+                <label id="sound-label"
+                    ><input type="checkbox" id="sound-chk" checked />
+                    Sound</label
+                >
+            </div>
+
+            <div id="tab-console" class="tab-panel active">
+                <div id="terminal"></div>
+                <div id="log-splitter" title="Drag to resize"></div>
+                <div id="log-panel">
+                    <div class="dbg-panel-hdr">
+                        <span class="log-title">LOG</span>
+                        <button id="log-toggle" title="Show/hide log">&lt;&gt;</button>
+                    </div>
+                    <pre class="dbg-panel-body dbg-log-body" id="dbg-log"></pre>
+                </div>
+            </div>
+            <!-- Debug GUI tab -->
+            <div id="tab-debug" class="tab-panel">
+                <div class="dbg-main">
+                    <!-- Debugger sub-tab -->
+                    <div class="dbg-subpanel active" id="dbg-sub-debug">
+                        <div id="dbg-off">
+                            <div class="title">MACHINE IS OFF</div>
+                            <div>
+                                Turn it on with the power switch on the front panel,
+                                or pick a program in the menu above.
+                            </div>
+                        </div>
+                        <div class="dbg-toolbar">
+                            <button
+                                class="dbg-btn dbg-pause"
+                                id="dbg-pause-btn"
+                                title="Halt (F6)"
+                            >
+                                &#9646;&#9646;
+                            </button>
+                            <button
+                                class="dbg-btn dbg-resume"
+                                id="dbg-resume-btn"
+                                title="Run (F5)"
+                            >
+                                &#9654;
+                            </button>
+                            <button
+                                class="dbg-btn dbg-step"
+                                id="dbg-step-btn"
+                                title="Step one instruction (F8)"
+                            >
+                                &#10145;
+                            </button>
+                            <button
+                                class="dbg-btn dbg-step"
+                                id="dbg-ustep-btn"
+                                title="Micro-step (F7)"
+                            >
+                                &#956;
+                            </button>
+                            <span id="dbg-status-txt" class="dbg-status-text"
+                                >&#8212;</span
+                            >
+                            <span id="dbg-time-txt" class="dbg-status-text"></span>
+                            <span class="dbg-hint"
+                                >F5 run &middot; F6 halt &middot; F7 &micro;step &middot; F8 step &middot; F9 breakpoint</span
+                            >
+                        </div>
+                        <div class="dbg-debug-cols">
+                            <!-- Registers, MMU, microcode: collapsible sections -->
+                            <div class="dbg-debug-col dbg-col-regs">
+                                <div class="dbg-sec" data-sec="regs">
+                                    <div class="dbg-panel-hdr dbg-sec-hdr">Registers</div>
+                                    <pre class="dbg-panel-body" id="dbg-regs"></pre>
+                                </div>
+                                <div class="dbg-sec" data-sec="micro">
+                                    <div class="dbg-panel-hdr dbg-sec-hdr">Microcode</div>
+                                    <pre class="dbg-panel-body" id="dbg-micro"></pre>
+                                </div>
+                                <div class="dbg-sec" data-sec="mmu">
+                                    <div class="dbg-panel-hdr dbg-sec-hdr">MMU</div>
+                                    <pre class="dbg-panel-body" id="dbg-mmu"></pre>
+                                </div>
+                            </div>
+                            <!-- Listing with its toolbar -->
+                            <div class="dbg-debug-col dbg-col-disasm">
+                                <div class="dbg-listbar">
+                                    <label for="dbg-disasm-base">Go to</label>
+                                    <input
+                                        id="dbg-disasm-base"
+                                        type="text"
+                                        placeholder="octal"
+                                        spellcheck="false"
+                                    />
+                                    <button class="dbg-btn" id="dbg-disasm-go-btn">Go</button>
+                                    <button
+                                        class="dbg-btn"
+                                        id="dbg-disasm-pc-btn"
+                                        title="Follow PC"
+                                    >PC</button>
+                                    <span class="sep"></span>
+                                    <label for="dbg-find">Find</label>
+                                    <input
+                                        id="dbg-find"
+                                        type="text"
+                                        placeholder="text"
+                                        title="Search the disassembly from the selected line. Enter: next."
+                                        spellcheck="false"
+                                    />
+                                    <span class="dbg-find-msg" id="dbg-find-msg"></span>
+                                    <span class="sep"></span>
+                                    <label for="dbg-bp-input">Breakpoint</label>
+                                    <input
+                                        id="dbg-bp-input"
+                                        type="text"
+                                        placeholder="octal"
+                                        spellcheck="false"
+                                    />
+                                    <button class="dbg-btn" id="dbg-bp-add-btn">+</button>
+                                    <div id="dbg-bp-list"></div>
+                                </div>
+                                <div class="dbg-codemem">
+                                    <pre class="dbg-panel-body" id="dbg-disasm"></pre>
+                                    <div id="mem-splitter" title="Drag to resize"></div>
+                                    <div id="dbg-mempane">
+                                        <div class="dbg-listbar">
+                                            <button
+                                                class="pane-toggle"
+                                                id="mem-toggle"
+                                                title="Show/hide memory"
+                                            >&lt;&gt;</button>
+                                            <label class="mem-title">Memory</label>
+                                            <span class="mem-ctrl">
+                                                <input
+                                                    id="mem-addr"
+                                                    type="text"
+                                                    placeholder="octal"
+                                                    spellcheck="false"
+                                                />
+                                                <button class="dbg-btn" id="mem-go-btn">Go</button>
+                                                <label for="mem-find">Find</label>
+                                                <input
+                                                    id="mem-find"
+                                                    type="text"
+                                                    placeholder='octal or "text'
+                                                    title='Octal word, or "text for ASCII bytes. Enter: next.'
+                                                    spellcheck="false"
+                                                />
+                                                <span class="dbg-find-msg" id="mem-find-msg"></span>
+                                                <label for="mem-follow">Follow</label>
+                                                <select id="mem-follow">
+                                                    <option value="">-</option>
+                                                    <option value="6">SP</option>
+                                                    <option value="0">R0</option>
+                                                    <option value="1">R1</option>
+                                                    <option value="2">R2</option>
+                                                    <option value="3">R3</option>
+                                                    <option value="4">R4</option>
+                                                    <option value="5">R5</option>
+                                                </select>
+                                            </span>
+                                        </div>
+                                        <pre class="dbg-panel-body" id="dbg-mem"></pre>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Logic Analyzer tab -->
+            <div id="tab-la" class="tab-panel">
+                <div class="la-cols">
+                    <!-- Signal catalog -->
+                    <div class="la-cat" id="la-cat">
+                        <div class="la-col-hdr">
+                            <span class="la-cat-title">Signals</span>
+                            <button class="pane-toggle" id="la-cat-toggle" title="Show/hide the signal list">&lt;&gt;</button>
+                        </div>
+                        <input
+                            id="la-search"
+                            class="la-input"
+                            type="text"
+                            placeholder="Search pin, alias, description"
+                            spellcheck="false"
+                        />
+                        <div class="la-siglist" id="la-catalog"></div>
+                    </div>
+                    <div id="la-cat-splitter" title="Drag to resize"></div>
+                    <!-- Configuration and waveforms -->
+                    <div class="la-main">
+                        <div class="la-bar">
+                            <span class="la-ctl">
+                                <button class="la-btn la-arm" id="la-arm-btn">Arm</button>
+                                <button class="la-btn la-disarm" id="la-disarm-btn">Stop</button>
+                                <span id="la-status">Idle</span>
+                            </span>
+                            <span class="sep"></span>
+                            <span class="la-ctl">
+                                <label for="la-trig-sig">Trigger</label>
+                                <select id="la-trig-sig"></select>
+                                <select id="la-trig-cond"></select>
+                                <input
+                                    id="la-trig-val"
+                                    class="la-input la-oct"
+                                    type="text"
+                                    placeholder="value"
+                                    title="Value (octal)"
+                                    spellcheck="false"
+                                />
+                                <input
+                                    id="la-trig-mask"
+                                    class="la-input la-oct"
+                                    type="text"
+                                    placeholder="mask"
+                                    title="Mask (octal), empty = all bits"
+                                    spellcheck="false"
+                                />
+                                <label for="la-pos">at</label>
+                                <select id="la-pos" title="Trigger position in the window">
+                                    <option value="0">0%</option>
+                                    <option value="10">10%</option>
+                                    <option value="25">25%</option>
+                                    <option value="50" selected>50%</option>
+                                    <option value="75">75%</option>
+                                    <option value="90">90%</option>
+                                    <option value="100">100%</option>
+                                </select>
+                            </span>
+                            <span class="sep"></span>
+                            <span class="la-ctl">
+                                <label for="la-depth">Depth</label>
+                                <select id="la-depth">
+                                    <option>256</option>
+                                    <option selected>512</option>
+                                    <option>1024</option>
+                                    <option>2048</option>
+                                </select>
+                                <label for="la-rate">every</label>
+                                <input id="la-rate" class="la-input la-num" type="text" value="1" />
+                                <label>&micro;step</label>
+                                <span id="la-window" class="la-dim"></span>
+                            </span>
+                        </div>
+                        <div class="la-wave">
+                            <div class="la-labels" id="la-labels"></div>
+                            <div class="la-canvas-wrap" id="la-canvas-wrap">
+                                <canvas id="la-canvas"></canvas>
+                                <div id="la-hscroll" title="Drag to pan"><div id="la-hthumb"></div></div>
+                            </div>
+                        </div>
+                        <div class="la-foot">
+                            <button class="la-btn" id="la-fit-btn">Fit</button>
+                            <span id="la-cursor" class="la-dim"></span>
+                            <span class="la-dim" style="margin-left: auto"
+                                >wheel: zoom &middot; drag: pan</span
+                            >
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Docs tab -->
+            <div id="tab-docs" class="tab-panel">
+                <div class="docs-layout">
+                    <nav class="docs-nav">
+                        <button class="docs-nav-btn active" data-doctab="impl">
+                            Programs
+                        </button>
+                        <button class="docs-nav-btn" data-doctab="about">
+                            About
+                        </button>
+                    </nav>
+                    <div class="docs-content">
+                        <div id="doc-about" class="docs-page">
+                            <h2>ll/34</h2>
+                            <p>
+                                ll/34 is a cycle-accurate, circuit-level
+                                emulator for the PDP-11/34A (1976). It runs the original ROM tables,
+                                either dumped or reconstructed from the schematics,
+                                and is essentially a direct translation of the KD11-EA engineering drawings.
+
+                            </p>
+                            <br />
+                            <p>
+                                Read more at
+                                <a
+                                    href="https://github.com/dbrll/ll-34"
+                                    target="_blank"
+                                    >https://github.com/dbrll/ll-34</a
+                                >
+                            </p>
+                            <p>Damien Boureille, 2026. MIT License</p>
+                            <p></p>
+                            <p>
+                                <br/>
+                                Fun facts:
+                            <p> - The power switch on the front panel
+                                is silent. The loud clicking sound comes from
+                                the relay in the PSU. </p>
+                            <p>
+                                - The CPU is cooled by two
+                                large AC fans running at mains voltage. They are
+                                about as loud as a vacuum cleaner.
+                            </p>
+                            <p>
+                                - The KD11-EA CPU uses a remarkably simple design.
+                                It is roughly a third of the complexity of an Intel 8086
+                                in transistor count, yet achieves comparable performance.
+                                Just 512 words of microcode control the CPU, and open-collector
+                                ROMs combine their outputs by wire-OR to decode instructions
+                                without arbitration logic.
+                            </p>
+                            </p>
+                        </div>
+                        <div id="doc-impl" class="docs-page active">
+                            <h2>Programs</h2>
+
+                            <h3>Default (ODT)</h3>
+                            <p>
+                                ODT (Online Debugging Tool) is the console
+                                monitor built into the M9301-YF boot ROM (what
+                                would be called a BIOS or EFI nowadays). It
+                                allows loading, running, and debugging code from the
+                                terminal.
+                            </p>
+                            <p>ODT consists of four commands:</p>
+
+                            <ul>
+                                <li>
+                                    <code>L XXXXXX</code> Load address (in octal)
+                                    ODT uses the "space" key instead of "Enter".
+                                </li>
+                                <li>
+                                    <code>E</code> Examine word at current
+                                    address (auto-increments)
+                                </li>
+                                <li>
+                                    <code>D XXXXXX</code> Deposit word at
+                                    current address (auto-increments)
+                                </li>
+                                <li>
+                                    <code>S</code> Start execution at current
+                                    address
+                                </li>
+                            </ul>
+                            <p>
+                                <br />
+                                Example:
+                            <p><code>L 1000</code> [space], then <code>E</code> to read address <code>001000</code>. </p>
+                            <p>Type <code>D 777</code>, then [space] to write <code>000777</code> there. </p>
+                            <p> Finally, <code>S</code> [space] to start execution from that address.</p>
+
+                            </p>
+                            <br/>
+                            <p>Note: ODT may seem spartan, but the only memory it requires to run is the CPU registers!</p>
+
+                            <h3>ATTN/11</h3>
+                            <p>
+                                A small Transformer (1216 parameters) for the
+                                PDP-11/34, written in baremetal assembly. Training takes about 5:30mn. Read
+                                more at
+                                <a
+                                    href="https://github.com/dbrll/ATTN-11/"
+                                    target="_blank"
+                                >
+                                    github.com/dbrll/ATTN-11/
+                                </a>
+                            </p>
+
+                            <h3>Game of Life</h3>
+                            <p>
+                                Conway&rsquo;s Game of Life, loaded from an
+                                ASCII object file. Runs continuously in the console.
+                            </p>
+
+                            <h3>RT-11 V4</h3>
+                            <p>
+                                RT-11 SJ V04, Digital&rsquo;s single-job
+                                real-time operating system. Boots from a virtual
+                                RK05 disk. It uses TOPS-10 commands, like OS-8,
+                                CP/M or MS-DOS:
+                                <code>cd</code>, <code>dir</code>,
+                                <code>type</code>. Run a program with
+                                <code>RUN</code> followed by the program name.
+                                Programs use a <code>SAV</code> extension.
+                            </p>
+                            <p>
+                                The disk image includes the original
+                                <strong>Tetris</strong> game written for the
+                                Elektronika 60, a soviet PDP-11/03 clone. Type
+                                <code>RUN TETRIS</code> to play. Controls:
+                                <code>7</code>/<code>9</code> left/right,
+                                <code>8</code> rotate, <code>4</code> speed up,
+                                <code>5</code> drop.</p>
+                            <p>Note: the game runs roughly
+                                2&times; faster than intended since the
+                                PDP-11/34 is faster than the original target
+                                machine.
+                            </p>
+                            <p>
+                            <code>RUN ADVENT</code> will start the <a
+                                    href="https://trmm.net/Advent/"
+                                    target="_blank"
+                                >
+                                    Colossal Cave Adventure
+                                </a>, built on a real PDP-11/34.
+                            </p>
+
+                            <h3>V6 UNIX</h3>
+                            <p>
+                                Sixth Edition UNIX (1975), the first version of
+                                UNIX to be widely distributed outside Bell Labs.
+                            </p>
+                            <p>
+                                Type <code>rkunix</code> at the RK05 disk drive bootloader (<code>@</code> prompt).
+                                Log in as <code>ken</code> or <code>root</code> (no
+                                password). On V6, <code>cd</code> is
+                                <code>chdir</code>, and <code>SIGINT</code> uses
+                                <code>DEL</code> instead of <code>^C</code>.
+                            </p>
+
+                            <h3>Xortran</h3>
+                            <p>
+                                A small neural-network written in
+                                Fortran IV under RT-11 V3. It uses
+                                backpropagation to train a multilayer perceptron
+                                on the XOR problem.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- panel.js must come first (defines PANEL_*, KEY, BUTTONS, LEDS, AUDIO) -->
+        <script src="panel.js"></script>
+
+        <script>
+            /* ================================================================
+             * xterm.js
+             * ================================================================ */
+            const term = new Terminal({
+                cols: 80,
+                rows: 25,
+                fontFamily: '"VT220", "Courier New", monospace',
+                fontSize: 18,
+                theme: {
+                     background: "#0d1117",
+                     foreground: "#c0c4c8",   /* P4 white phosphor */
+                     cursor: "#a0c4c8",
+                     black: "#0d1117",
+                     brightBlack: "#6e7681",
+                 },
+                cursorBlink: false,
+                scrollback: 2000,
+            });
+            const fitAddon = new FitAddon.FitAddon();
+            term.loadAddon(fitAddon);
+            term.open(document.getElementById("terminal"));
+            window.addEventListener("resize", () => {
+                fitAddon.fit();
+                buildPanel();
+            });
+
+            /* ================================================================
+             * Tab switching
+             * ================================================================ */
+            document.querySelectorAll(".tab-btn[data-tab]").forEach((btn) => {
+                btn.addEventListener("click", () => {
+                    document
+                        .querySelectorAll(".tab-btn[data-tab]")
+                        .forEach((b) => b.classList.remove("active"));
+                    document
+                        .querySelectorAll(".tab-panel")
+                        .forEach((p) => p.classList.remove("active"));
+                    btn.classList.add("active");
+                    document
+                        .getElementById("tab-" + btn.dataset.tab)
+                        .classList.add("active");
+                    activeTab = btn.dataset.tab;
+                    if (activeTab === "console") {
+                        fitAddon.fit();
+                        term.focus();
+                    }
+                    if (activeTab === "debug") {
+                        dbgOnEnter();
+                    }
+                    if (activeTab === "la") {
+                        laOnEnter();
+                    }
+                });
+            });
+
+            /* Bottom pane height: drag handle, kept across visits */
+            (function () {
+                const bottom = document.getElementById("bottom");
+                const handle = document.getElementById("bottom-resize");
+                const apply = (h) => {
+                    h = Math.round(Math.max(240, Math.min(h, window.innerHeight - 40)));
+                    bottom.style.height = h + "px";
+                    return h;
+                };
+                let height = parseInt(localStorage.getItem("ll34.bottomHeight")) || 0;
+                if (height) apply(height);
+                let start = null;
+                const relayout = () => {
+                    if (activeTab === "console") fitAddon.fit();
+                    if (activeTab === "debug" && powered) {
+                        dbgRefreshDisasm();
+                        dbgRefreshMemPane();
+                    }
+                };
+                handle.addEventListener("pointerdown", (e) => {
+                    handle.setPointerCapture(e.pointerId);
+                    handle.classList.add("dragging");
+                    start = { y: e.clientY, h: bottom.offsetHeight };
+                });
+                handle.addEventListener("pointermove", (e) => {
+                    if (!start) return;
+                    /* The handle is on top: dragging up makes the pane taller */
+                    height = apply(start.h + start.y - e.clientY);
+                    relayout();
+                });
+                handle.addEventListener("pointerup", (e) => {
+                    handle.releasePointerCapture(e.pointerId);
+                    handle.classList.remove("dragging");
+                    start = null;
+                    localStorage.setItem("ll34.bottomHeight", String(height));
+                });
+            })();
+
+            /* Log panel: resizable, can be hidden, settings kept across visits */
+            (function () {
+                const tab = document.getElementById("tab-console");
+                const panel = document.getElementById("log-panel");
+                const splitter = document.getElementById("log-splitter");
+                let width = parseInt(localStorage.getItem("ll34.logWidth")) || 320;
+                const setWidth = (w) => {
+                    width = Math.max(160, Math.min(w, tab.clientWidth - 300));
+                    panel.style.width = width + "px";
+                };
+                panel.style.width = width + "px";
+                if (localStorage.getItem("ll34.logHidden") === "1")
+                    tab.classList.add("log-hidden");
+
+                document.getElementById("log-toggle").addEventListener("click", () => {
+                    tab.classList.toggle("log-hidden");
+                    localStorage.setItem(
+                        "ll34.logHidden",
+                        tab.classList.contains("log-hidden") ? "1" : "0",
+                    );
+                    fitAddon.fit();
+                });
+
+                splitter.addEventListener("pointerdown", (e) => {
+                    splitter.setPointerCapture(e.pointerId);
+                    splitter.classList.add("dragging");
+                });
+                splitter.addEventListener("pointermove", (e) => {
+                    if (!splitter.classList.contains("dragging")) return;
+                    const right = tab.getBoundingClientRect().right;
+                    setWidth(right - e.clientX);
+                    fitAddon.fit();
+                });
+                splitter.addEventListener("pointerup", (e) => {
+                    splitter.releasePointerCapture(e.pointerId);
+                    splitter.classList.remove("dragging");
+                    localStorage.setItem("ll34.logWidth", String(width));
+                });
+            })();
+
+            /* Docs vertical sub-tab switching */
+            document
+                .querySelectorAll(".docs-nav-btn[data-doctab]")
+                .forEach((btn) => {
+                    btn.addEventListener("click", () => {
+                        document
+                            .querySelectorAll(".docs-nav-btn")
+                            .forEach((b) => b.classList.remove("active"));
+                        document
+                            .querySelectorAll(".docs-page")
+                            .forEach((p) => p.classList.remove("active"));
+                        btn.classList.add("active");
+                        document
+                            .getElementById("doc-" + btn.dataset.doctab)
+                            .classList.add("active");
+                    });
+                });
+
+            /* ================================================================
+             * Panel layout: convert px coords to CSS % and inject DOM elements
+             * ================================================================ */
+            function pct(px, total) {
+                return ((px / total) * 100).toFixed(4) + "%";
+            }
+
+            function buildPanel() {
+                const overlay = document.getElementById("panel-overlay");
+                const pw = PANEL_IMG_W,
+                    ph = PANEL_IMG_H;
+
+                /* Power button ON overlay */
+                const pOn = document.getElementById("power-btn-on");
+                pOn.style.left = pct(POWER_BTN.x, pw);
+                pOn.style.top = pct(POWER_BTN.y, ph);
+                pOn.style.width = pct(POWER_BTN.w, pw);
+                pOn.style.height = pct(POWER_BTN.h, ph);
+
+                /* Power click zone (same position) */
+                const pz = document.getElementById("power-zone");
+                pz.style.left = pct(POWER_BTN.x + POWER_BTN.w * 0.1, pw);
+                pz.style.top = pct(POWER_BTN.y + POWER_BTN.h * 0.1, ph);
+                pz.style.width = pct(POWER_BTN.w * 0.8, pw);
+                pz.style.height = pct(POWER_BTN.h * 0.8, ph);
+
+                /* 7-segment display */
+                const seg = document.getElementById("seg-display");
+                seg.style.left = pct(DISPLAY.x, pw);
+                seg.style.top = pct(DISPLAY.y, ph);
+                seg.style.width = pct(DISPLAY.w, pw);
+                seg.style.height = pct(DISPLAY.h, ph);
+                /* Font size relative to display height: single row, ~80% fill */
+                const dispH =
+                    document.getElementById("panel-img").clientHeight *
+                    (DISPLAY.h / ph);
+                seg.style.fontSize = (dispH * 0.78).toFixed(1) + "px";
+
+                /* Remove previous dynamic elements */
+                overlay
+                    .querySelectorAll(".led-dot, .panel-btn")
+                    .forEach((e) => e.remove());
+
+                /* LEDs */
+                for (const [name, cfg] of Object.entries(LEDS)) {
+                    const d = document.createElement("div");
+                    d.className = "led-dot";
+                    d.id = "led-" + name;
+                    const diam = pct(cfg.r * 2, pw);
+                    d.style.left = pct(cfg.x - cfg.r, pw);
+                    d.style.top = pct(cfg.y - cfg.r, ph);
+                    d.style.width = diam;
+                    d.style.height = pct(cfg.r * 2, ph);
+                    overlay.appendChild(d);
+                }
+
+                /* Buttons */
+                for (const btn of BUTTONS) {
+                    const b = document.createElement("button");
+                    b.className =
+                        "panel-btn" + (PANEL_DEBUG ? " debug-vis" : "");
+                    b.id = "pbtn-" + btn.id;
+                    b.title = btn.label;
+                    b.style.left = pct(btn.x, pw);
+                    b.style.top = pct(btn.y, ph);
+                    b.style.width = pct(btn.w, pw);
+                    b.style.height = pct(btn.h, ph);
+                    b.dataset.key = btn.key;
+                    overlay.appendChild(b);
+                }
+
+                /* Debug: click anywhere on panel to show pixel coordinates */
+                if (PANEL_DEBUG) {
+                    overlay.addEventListener("click", (e) => {
+                        const rect = overlay.getBoundingClientRect();
+                        const x = Math.round(
+                            ((e.clientX - rect.left) / rect.width) *
+                                PANEL_IMG_W,
+                        );
+                        const y = Math.round(
+                            ((e.clientY - rect.top) / rect.height) *
+                                PANEL_IMG_H,
+                        );
+                        console.log(`Panel click: x=${x}, y=${y}`);
+                    });
+                }
+            }
+
+            /* ================================================================
+             * Audio engine
+             * ================================================================ */
+            let audioCtx = null;
+            let clickBuffer = null;
+            let powerBuffer = null;
+            let powerIntroNode = null;
+            let powerLoopNode = null;
+            let powerLoopStartTime =
+                Infinity; /* absolute time when loop starts */
+            let keepAliveOsc =
+                null; /* keep-alive oscillator */
+            let masterGain =
+                null; /* master gain node, muted by the Sound checkbox */
+            let soundEnabled = true;
+
+            function ensureAudioCtx() {
+                if (!audioCtx) {
+                    audioCtx = new (
+                        window.AudioContext || window.webkitAudioContext
+                    )();
+                }
+                return audioCtx;
+            }
+
+            function getMasterOut() {
+                /* Master output node. All user audio goes through it. The keep-alive
+                 * bypasses it so the audio hardware never sleeps. */
+                if (!masterGain && audioCtx) {
+                    masterGain = audioCtx.createGain();
+                    masterGain.gain.value = soundEnabled ? 1.0 : 0.0;
+                    masterGain.connect(audioCtx.destination);
+                }
+                return masterGain || audioCtx.destination;
+            }
+
+            function setSoundEnabled(on) {
+                soundEnabled = on;
+                if (masterGain && audioCtx) {
+                    masterGain.gain.cancelScheduledValues(audioCtx.currentTime);
+                    masterGain.gain.setValueAtTime(
+                        masterGain.gain.value,
+                        audioCtx.currentTime,
+                    );
+                    masterGain.gain.linearRampToValueAtTime(
+                        on ? 1.0 : 0.0,
+                        audioCtx.currentTime + 0.5,
+                    );
+                }
+            }
+
+            function startKeepAlive() {
+                /* Inaudible oscillator at -80 dB (gain 0.0001). It keeps macOS CoreAudio
+                 * from putting the hardware to sleep between sounds, which would
+                 * otherwise delay each sound by ~1 s. */
+                if (keepAliveOsc || !audioCtx) return;
+                keepAliveOsc = audioCtx.createOscillator();
+                const g = audioCtx.createGain();
+                g.gain.value = 0.0001; /* -80 dB */
+                keepAliveOsc.connect(g);
+                g.connect(audioCtx.destination);
+                keepAliveOsc.start();
+            }
+
+            async function prewarmAudio() {
+                /* Play 1 s of run.mp3 at -60 dB (gain 0.001) to initialize the macOS
+                 * audio pipeline, then start the keep-alive. Called on the first
+                 * user gesture (click or keydown), not at page load: browsers block
+                 * an AudioContext created outside a gesture. */
+                if (!powerBuffer) return;
+                ensureAudioCtx();
+                try {
+                    await audioCtx.resume();
+                } catch (_) {}
+                if (audioCtx.state !== "running") return;
+
+                startKeepAlive();
+
+                const warmGain = audioCtx.createGain();
+                warmGain.gain.value = 0.001; /* -60 dB */
+                warmGain.connect(
+                    audioCtx.destination,
+                ); /* bypasses masterGain */
+                const src = audioCtx.createBufferSource();
+                src.buffer = powerBuffer;
+                src.connect(warmGain);
+                src.start(0, 0, 1.0); /* 1 second from start of run.mp3 */
+                src.onended = () => warmGain.disconnect();
+            }
+
+            /* First user gesture: create AudioContext and warm up hardware.
+             * Avoids the ~1s CoreAudio wake-up delay at power click time. */
+            let audioWarmedUp = false;
+            function warmAudioOnGesture() {
+                if (audioWarmedUp) return;
+                audioWarmedUp = true;
+                document.removeEventListener("click", warmAudioOnGesture, true);
+                document.removeEventListener(
+                    "keydown",
+                    warmAudioOnGesture,
+                    true,
+                );
+                prewarmAudio();
+            }
+
+            async function initAudio() {
+                /* Pre-decode with OfflineAudioContext, which needs no user gesture and
+                 * is not subject to the autoplay policy. The decoded AudioBuffers are
+                 * reused by the real context. */
+                let tmpCtx;
+                try {
+                    tmpCtx = new OfflineAudioContext(2, 44100, 44100);
+                } catch (_) {
+                    console.warn("[ll-34] OfflineAudioContext unavailable");
+                    return;
+                }
+
+                async function decode(url) {
+                    try {
+                        const resp = await fetch(url);
+                        if (!resp.ok) throw new Error(resp.status);
+                        return await tmpCtx.decodeAudioData(
+                            await resp.arrayBuffer(),
+                        );
+                    } catch (e) {
+                        console.warn("[ll-34] audio:", url, e.message);
+                        return null;
+                    }
+                }
+
+                [clickBuffer, powerBuffer] = await Promise.all([
+                    decode(AUDIO.keys.file),
+                    decode(AUDIO.power.file),
+                ]);
+
+                /* One-shot listener: the first click or keydown creates the AudioContext
+                 * and warms up the hardware. capture=true runs it before the other
+                 * handlers. */
+                document.addEventListener("click", warmAudioOnGesture, true);
+                document.addEventListener("keydown", warmAudioOnGesture, true);
+            }
+
+            function playClick() {
+                if (!clickBuffer || !audioCtx) return;
+                const segs = AUDIO.keys.segments;
+                const seg = segs[Math.floor(Math.random() * segs.length)];
+                const src = audioCtx.createBufferSource();
+                src.buffer = clickBuffer;
+                src.connect(getMasterOut());
+                src.start(0, seg.start, seg.end - seg.start);
+            }
+
+            function startPowerAudio() {
+                if (!powerBuffer || !audioCtx) return;
+                const cfg = AUDIO.power;
+                const skip = cfg.skip || 0;
+                /* Play intro, from skip to intro_end */
+                const intro = audioCtx.createBufferSource();
+                intro.buffer = powerBuffer;
+                intro.connect(getMasterOut());
+                const introLen = cfg.intro_end - skip;
+                intro.start(0, skip, introLen);
+                powerIntroNode = intro;
+                /* Schedule loop to start right after intro */
+                powerLoopStartTime = audioCtx.currentTime + introLen;
+                const loop = audioCtx.createBufferSource();
+                loop.buffer = powerBuffer;
+                loop.loop = true;
+                loop.loopStart = cfg.intro_end;
+                loop.loopEnd = cfg.loop_end;
+                loop.connect(getMasterOut());
+                loop.start(powerLoopStartTime, cfg.intro_end);
+                powerLoopNode = loop;
+            }
+
+            function stopPowerAudio() {
+                if (!powerBuffer || !audioCtx) return;
+                /* Stop intro */
+                if (powerIntroNode) {
+                    try {
+                        powerIntroNode.stop();
+                    } catch (_) {}
+                }
+                powerIntroNode = null;
+                /* Stop loop. If it has not started yet, disconnect() keeps it from playing later. */
+                if (powerLoopNode) {
+                    if (audioCtx.currentTime >= powerLoopStartTime) {
+                        try {
+                            powerLoopNode.stop();
+                        } catch (_) {}
+                    } else {
+                        powerLoopNode.disconnect();
+                    }
+                    powerLoopNode = null;
+                }
+                powerLoopStartTime = Infinity;
+                /* Play outro, from loop_end to the end */
+                const cfg = AUDIO.power;
+                const outro = audioCtx.createBufferSource();
+                outro.buffer = powerBuffer;
+                outro.connect(getMasterOut());
+                outro.start(0, cfg.loop_end);
+            }
+
+            /* ================================================================
+             * Power state
+             * ================================================================ */
+            let powered = false;
+
+            function doPowerOn(uiOnly) {
+                if (powered) return;
+                powered = true;
+                document
+                    .getElementById("power-btn-on")
+                    .classList.add("visible");
+                setDisplayOn(true);
+                startPowerAudio();
+                if (!uiOnly && window._wasm_power_on) window._wasm_power_on();
+            }
+
+            function doPowerOff() {
+                if (!powered) return;
+                powered = false;
+                document
+                    .getElementById("power-btn-on")
+                    .classList.remove("visible");
+                setDisplayOn(false);
+                stopPowerAudio();
+                if (window._wasm_power_off) window._wasm_power_off();
+            }
+
+            function setDisplayOn(on) {
+                const el = document.getElementById("seg-addr");
+                if (el) el.classList.toggle("off", !on);
+            }
+
+            /* ================================================================
+             * Panel state polling (LEDs + display, called each RAF)
+             * ================================================================ */
+            function pollPanel() {
+                if (!window._wasm_get_leds) return;
+
+                /* Machine off: all LEDs off, no display update */
+                if (!powered) {
+                    setLed("run", false);
+                    setLed("bus_err", false);
+                    setLed("sr_disp", false);
+                    setLed("maint", false);
+                    setLed("dc_on", false);
+                    const cntrlBtn = document.getElementById("pbtn-cntrl");
+                    if (cntrlBtn) cntrlBtn.classList.remove("active");
+                    return;
+                }
+
+                const leds = window._wasm_get_leds();
+                const run = !!(leds & 1);
+                const err = !!(leds & 2);
+                const srDisp = !!(leds & 4);
+                const maint = !!(leds & 8);
+                const cntrl = !!(leds & 16);
+
+                setLed("run", run);
+                setLed("bus_err", err);
+                setLed("sr_disp", srDisp);
+                setLed("maint", maint);
+                setLed("dc_on", true);
+
+                /* Highlight CNTRL button when latched (sticky modifier) */
+                const cntrlBtn = document.getElementById("pbtn-cntrl");
+                if (cntrlBtn) cntrlBtn.classList.toggle("active", cntrl);
+
+                const addr = window._wasm_get_display_addr();
+                document.getElementById("seg-addr").textContent = toOct6(addr);
+            }
+
+            function setLed(name, on) {
+                const el = document.getElementById("led-" + name);
+                if (!el) return;
+                el.classList.toggle("on", !!on);
+            }
+
+            function toOct6(val) {
+                return val.toString(8).padStart(6, "0");
+            }
+
+            /* ================================================================
+             * VT52 to VT100 translator (xterm.js has no VT52 mode)
+             * ================================================================ */
+            let vt52Mode = false;
+            let vt52State = 0; /* 0=normal, 1=got ESC, 2=got ESC Y, 3=got ESC Y row */
+            let vt52Row = 0;
+            function vt52translate(raw) {
+                let out = "";
+                for (let i = 0; i < raw.length; i++) {
+                    const ch = raw.charCodeAt(i);
+                    switch (vt52State) {
+                        case 0 /* normal */:
+                            if (ch === 0x1b) vt52State = 1;
+                            else out += raw[i];
+                            break;
+                        case 1 /* got ESC */:
+                            switch (ch) {
+                                case 0x41:
+                                    out += "\x1b[A";
+                                    vt52State = 0;
+                                    break; /* A: cursor up */
+                                case 0x42:
+                                    out += "\x1b[B";
+                                    vt52State = 0;
+                                    break; /* B: cursor down */
+                                case 0x43:
+                                    out += "\x1b[C";
+                                    vt52State = 0;
+                                    break; /* C: cursor right */
+                                case 0x44:
+                                    out += "\x1b[D";
+                                    vt52State = 0;
+                                    break; /* D: cursor left */
+                                case 0x48:
+                                    out += "\x1b[H";
+                                    vt52State = 0;
+                                    break; /* H: cursor home */
+                                case 0x49:
+                                    out += "\x1bM";
+                                    vt52State = 0;
+                                    break; /* I: reverse LF */
+                                case 0x4a:
+                                    out += "\x1b[J";
+                                    vt52State = 0;
+                                    break; /* J: erase below */
+                                case 0x4b:
+                                    out += "\x1b[K";
+                                    vt52State = 0;
+                                    break; /* K: erase to EOL */
+                                case 0x59:
+                                    vt52State = 2;
+                                    break; /* Y: cursor addr */
+                                case 0x5a:
+                                    out += "\x1b[?6c";
+                                    vt52State = 0;
+                                    break; /* Z: identify */
+                                case 0x3d:
+                                    out += "\x1b=";
+                                    vt52State = 0;
+                                    break; /* =: alt keypad */
+                                case 0x3e:
+                                    out += "\x1b>";
+                                    vt52State = 0;
+                                    break; /* >: num keypad */
+                                case 0x46:
+                                    out += "\x1b(0";
+                                    vt52State = 0;
+                                    break; /* F: graphics on */
+                                case 0x47:
+                                    out += "\x1b(B";
+                                    vt52State = 0;
+                                    break; /* G: graphics off */
+                                default:
+                                    out += "\x1b" + raw[i];
+                                    vt52State = 0;
+                                    break;
+                            }
+                            break;
+                        case 2 /* got ESC Y, next byte is row+0x20 */:
+                            vt52Row = ch - 0x1f; /* 1-based for VT100 */
+                            vt52State = 3;
+                            break;
+                        case 3 /* got ESC Y row, next byte is col+0x20 */:
+                            out += "\x1b[" + vt52Row + ";" + (ch - 0x1f) + "H";
+                            vt52State = 0;
+                            break;
+                    }
+                }
+                return out;
+            }
+
+            /* ================================================================
+             * Demo catalog (hard-coded)
+             * ================================================================ */
+            const DEMOS = [
+                { label: "Default: ODT", type: "odt", file: null },
+                { label: "ATTN/11", type: "lda", file: "demos/ATTN-11.bin" },
+                {
+                    label: "Game of Life",
+                    type: "load",
+                    file: "demos/conway.con",
+                },
+                {
+                    label: "RT11 V4",
+                    type: "rk",
+                    file: "demos/rtv4_rk.dsk",
+                    vt52: true,
+                },
+                { label: "V6 UNIX", type: "rk", file: "demos/v6bin.rk" },
+                { label: "Xortran", type: "rk", file: "demos/XORTRN.RK0" },
+            ];
+
+            async function loadDemo(idx) {
+                const demo = DEMOS[idx];
+                if (!demo) return;
+
+                if (demo.type === "odt") {
+                    if (window._wasm_set_odt) window._wasm_set_odt();
+                    if (!powered) doPowerOn();
+                    else if (window._wasm_reset) window._wasm_reset();
+                    term.focus();
+                    return;
+                }
+
+                dbgLog("Loading " + demo.label + "...");
+                let data;
+                try {
+                    const resp = await fetch(demo.file);
+                    if (!resp.ok) throw new Error("HTTP " + resp.status);
+                    data = new Uint8Array(await resp.arrayBuffer());
+                } catch (e) {
+                    dbgLog("Error: " + e.message);
+                    return;
+                }
+
+                term.clear();
+                vt52Mode = !!demo.vt52;
+                vt52State = 0;
+
+                /* Write to Emscripten MEMFS */
+                const fname = demo.file.split("/").pop();
+                const mpath = "/demos/" + fname;
+                try {
+                    Module.FS.mkdir("/demos");
+                } catch (_) {}
+                Module.FS.writeFile(mpath, data);
+
+                if (demo.type === "rk") {
+                    window._wasm_load_rk_image(0, mpath);
+                    if (!powered) {
+                        doPowerOn(true);          /* UI only */
+                        window._wasm_power_on();  /* memset + power_on (S1 already set) */
+                    } else {
+                        if (window._wasm_reset) window._wasm_reset();
+                    }
+                } else if (demo.type === "lda") {
+                    const rc = window._wasm_load_lda(mpath);
+                    if (rc < 0) {
+                        dbgLog("Error: invalid LDA format or unreadable file.");
+                        return;
+                    }
+                    dbgLog("LDA loaded, start address: " + rc.toString(8));
+                    if (!powered) doPowerOn(true);
+                    if (window._wasm_reset) window._wasm_reset();
+                } else if (demo.type === "load") {
+                    const rc = window._wasm_load_asc(mpath);
+                    if (rc < 0) {
+                        dbgLog("Error: invalid ASC format or unreadable file.");
+                        return;
+                    }
+                    dbgLog("Program loaded, start address: " + rc.toString(8));
+                    if (!powered) doPowerOn(true);
+                    if (window._wasm_reset) window._wasm_reset();
+                }
+
+                term.focus();
+            }
+
+            /* ================================================================
+             * Shared helpers
+             * ================================================================ */
+
+            /* Active tab tracking */
+            let activeTab = "console";
+
+            /* Parse octal user input, return number or null */
+            function parseOct(s) {
+                s = s.trim();
+                if (!s) return null;
+                s = s.replace(/^0+/, "") || "0";
+                if (!/^[0-7]+$/.test(s)) return null;
+                return parseInt(s, 8);
+            }
+
+            /* 18-bit octal address string (6 digits) */
+            function toOct18(val) {
+                return (val >>> 0).toString(8).padStart(6, "0");
+            }
+
+            /* PSW mode names */
+            const MNAMES = ["K", "S", "?", "U"];
+
+            /* Map 16-bit virtual address to 18-bit physical (I/O page shortcut) */
+            function virt2phys(va) {
+                return va >= 0xe000 ? 0x30000 | va : va;
+            }
+
+            /* ================================================================
+             * Debug GUI panels
+             * ================================================================ */
+            let dbgRunRefreshSkip = 0;
+            let dbgLastPowered = null;
+
+            function escHtml(s) {
+                return s
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;");
+            }
+
+            function dbgUpdateStatus() {
+                const st = document.getElementById("dbg-status-txt");
+                const tm = document.getElementById("dbg-time-txt");
+                if (!st) return;
+                if (!powered || !window._wasm_is_halted) {
+                    st.textContent = "OFF";
+                    st.className = "dbg-status-text";
+                    if (tm) tm.textContent = "";
+                    return;
+                }
+                const halted = window._wasm_is_halted();
+                document.getElementById("dbg-sub-debug").classList.toggle("running", !halted);
+                st.textContent = halted ? "HALTED" : "RUNNING";
+                st.className =
+                    "dbg-status-text " + (halted ? "halted" : "running");
+                if (tm && window._wasm_get_us) {
+                    tm.textContent =
+                        "T=" +
+                        window._wasm_get_us().toLocaleString() +
+                        " \u00b5s";
+                }
+            }
+
+            /* Build a register dump string */
+            function dbgRegDump() {
+                if (!window._wasm_get_reg) return "";
+                const regs = ["R0", "R1", "R2", "R3", "R4", "R5", "SP", "PC"];
+                let line1 = "",
+                    line2 = "";
+                for (let i = 0; i < 4; i++)
+                    line1 +=
+                        regs[i] + "=" + toOct6(window._wasm_get_reg(i)) + "  ";
+                for (let i = 4; i < 8; i++)
+                    line2 +=
+                        regs[i] + "=" + toOct6(window._wasm_get_reg(i)) + "  ";
+                const psw = window._wasm_get_psw();
+                const cm = (psw >> 14) & 3,
+                    pm = (psw >> 12) & 3;
+                const pri = (psw >> 5) & 7;
+                const n = (psw >> 3) & 1,
+                    z = (psw >> 2) & 1,
+                    v = (psw >> 1) & 1,
+                    c = psw & 1;
+                const pswStr =
+                    "PSW=" +
+                    toOct6(psw) +
+                    "  N:" +
+                    n +
+                    " Z:" +
+                    z +
+                    " V:" +
+                    v +
+                    " C:" +
+                    c +
+                    "  Mode:" +
+                    MNAMES[cm] +
+                    ">" +
+                    MNAMES[pm] +
+                    "  PRI:" +
+                    pri;
+                return line1.trimEnd() + "\n" + line2.trimEnd() + "\n" + pswStr;
+            }
+
+            function dbgRefreshRegs() {
+                const el = document.getElementById("dbg-regs");
+                if (!el || !window._wasm_get_reg) return;
+                el.textContent = dbgRegDump();
+            }
+
+            let dbgDisasmBase = null; /* null = follow PC */
+            let dbgSelAddr = null; /* selected listing row, target of F9 */
+
+            function dbgBpSet() {
+                const set = new Set();
+                if (!window._wasm_bp_count) return set;
+                const n = window._wasm_bp_count();
+                for (let i = 0; i < n; i++) set.add(window._wasm_bp_addr(i));
+                return set;
+            }
+
+            function dbgToggleBp(addr) {
+                if (!window._wasm_bp_set) return;
+                addr &= 0xffff;
+                if (dbgBpSet().has(addr)) window._wasm_bp_del(addr);
+                else window._wasm_bp_set(addr);
+                dbgRefreshBpList();
+                dbgRefreshDisasm();
+            }
+
+            let dbgRows = []; /* addresses of the rendered listing rows */
+
+            function dbgListRows() {
+                const el = document.getElementById("dbg-disasm");
+                const lh = parseFloat(getComputedStyle(el).lineHeight) || 18;
+                return Math.max(4, Math.floor((el.clientHeight - 8) / lh));
+            }
+
+            function dbgRefreshDisasm() {
+                const el = document.getElementById("dbg-disasm");
+                if (!el || !window._wasm_disasm) return;
+                const pc = window._wasm_get_reg(7);
+                const bps = dbgBpSet();
+                const rows = dbgListRows();
+                /* Following the PC: about a third of the rows above it */
+                let addr =
+                    dbgDisasmBase !== null
+                        ? dbgDisasmBase & 0xffff
+                        : (pc - 2 * Math.floor(rows / 3)) & 0xfffe;
+                let html = "";
+                dbgRows = [];
+                for (let i = 0; i < rows; i++) {
+                    const a = addr & 0xffff;
+                    const dasm = window._wasm_disasm(a);
+                    let len = window._wasm_disasm_len() || 2;
+                    /* Never decode across the PC: realign on it */
+                    if (a < pc && a + len > pc) len = pc - a;
+                    dbgRows.push(a);
+                    let cls = "dis-row";
+                    if (a === pc) cls += " pc";
+                    if (bps.has(a)) cls += " bp";
+                    if (a === dbgSelAddr) cls += " sel";
+                    html +=
+                        '<div class="' + cls + '" data-addr="' + a + '">' +
+                        '<span class="dis-gutter"></span>' +
+                        '<span class="dis-mark">' + (a === pc ? "\u25b8" : "") + "</span>" +
+                        toOct6(a) + ": " + escHtml(dasm || "???") +
+                        "</div>";
+                    addr = (addr + len) & 0xffff;
+                }
+                el.innerHTML = html;
+            }
+
+            /* Search the disassembly for a text, from the selected line.
+             * The I/O page is skipped: reading device registers has side effects. */
+            function dbgFind(fromNext) {
+                const q = document.getElementById("dbg-find").value.trim().toLowerCase();
+                const msg = document.getElementById("dbg-find-msg");
+                msg.textContent = "";
+                if (!q || !powered || !window._wasm_disasm) return;
+                const IO_PAGE = 0o160000;
+                let a = dbgSelAddr !== null ? dbgSelAddr : dbgRows.length ? dbgRows[0] : 0;
+                if (fromNext) {
+                    window._wasm_disasm(a);
+                    a += window._wasm_disasm_len() || 2;
+                }
+                for (let n = 0, wrapped = false; n < 0o160000 / 2; n++) {
+                    if (a >= IO_PAGE) {
+                        if (wrapped) break;
+                        a = 0;
+                        wrapped = true;
+                    }
+                    const text = toOct6(a) + ": " + (window._wasm_disasm(a) || "");
+                    const len = window._wasm_disasm_len() || 2;
+                    if (text.toLowerCase().includes(q)) {
+                        dbgSelAddr = a;
+                        dbgDisasmBase = a;
+                        dbgRefreshDisasm();
+                        return;
+                    }
+                    a += len;
+                }
+                msg.textContent = "not found";
+            }
+
+            function dbgRefreshBpList() {
+                const el = document.getElementById("dbg-bp-list");
+                if (!el || !window._wasm_bp_count) return;
+                const n = window._wasm_bp_count();
+                let html = "";
+                for (let i = 0; i < n; i++) {
+                    const addr = window._wasm_bp_addr(i);
+                    html +=
+                        '<span class="dbg-bp-chip" data-addr="' + addr +
+                        '" title="Show in listing">' + toOct6(addr) +
+                        '<button class="bp-del" data-addr="' + addr +
+                        '" title="Remove">\u00d7</button></span>';
+                }
+                el.innerHTML = html;
+            }
+
+            function dbgRefreshMMU() {
+                const el = document.getElementById("dbg-mmu");
+                if (!el || !window._wasm_get_mmu_sr0) return;
+                const sr0 = window._wasm_get_mmu_sr0();
+                const sr2 = window._wasm_get_mmu_sr2();
+                const en = sr0 & 1;
+                const acfNames = ["NR", "RO", "xx", "RW"];
+                let out =
+                    "SR0=" +
+                    toOct6(sr0) +
+                    " SR2=" +
+                    toOct6(sr2) +
+                    " " +
+                    (en ? "ON" : "off") +
+                    "\n";
+                out += "Kernel:\n";
+                for (let i = 0; i < 8; i++) {
+                    const par = window._wasm_get_mmu_par(i);
+                    const pdr = window._wasm_get_mmu_pdr(i);
+                    out +=
+                        " K" +
+                        i +
+                        " " +
+                        par.toString(8).padStart(7, "0") +
+                        " " +
+                        pdr.toString(8).padStart(6, "0") +
+                        " " +
+                        acfNames[(pdr >> 1) & 3] +
+                        "\n";
+                }
+                out += "User:\n";
+                for (let i = 0; i < 8; i++) {
+                    const par = window._wasm_get_mmu_par(i + 8);
+                    const pdr = window._wasm_get_mmu_pdr(i + 8);
+                    out +=
+                        " U" +
+                        i +
+                        " " +
+                        par.toString(8).padStart(7, "0") +
+                        " " +
+                        pdr.toString(8).padStart(6, "0") +
+                        " " +
+                        acfNames[(pdr >> 1) & 3] +
+                        "\n";
+                }
+                el.textContent = out.trimEnd();
+            }
+
+            /* Memory pane: physical RAM read directly (no bus side effects) */
+            let memBase = 0; /* byte address of the first row */
+            let memPrev = new Map(); /* word values at the previous refresh */
+            let memRowBytes = 16; /* 8 or 4 words per row, from the pane width */
+            let memHit = null; /* { addr, len } of the last search hit, in bytes */
+
+            /* Find an octal word, or "text as ASCII bytes, after the last hit */
+            function memFind(fromNext) {
+                const raw = document.getElementById("mem-find").value;
+                const msg = document.getElementById("mem-find-msg");
+                msg.textContent = "";
+                if (!raw.trim() || !window._wasm_ram_ptr || !Module.HEAPU16) return;
+                const ram = window._wasm_ram_ptr() >>> 1;
+                const nbytes = window._wasm_ram_words() * 2;
+                const byteAt = (a) => (Module.HEAPU16[ram + (a >> 1)] >> ((a & 1) * 8)) & 0xff;
+                let pat, step;
+                if (raw.startsWith('"')) {
+                    pat = [...raw.slice(1)].map((c) => c.charCodeAt(0) & 0xff);
+                    step = 1;
+                } else {
+                    const v = parseOct(raw);
+                    if (v === null) {
+                        msg.textContent = "octal or \"text";
+                        return;
+                    }
+                    pat = [v & 0xff, (v >> 8) & 0xff];
+                    step = 2;
+                }
+                if (!pat.length) return;
+                let start = memHit && fromNext ? memHit.addr + step : memHit ? memHit.addr : memBase;
+                start -= start % step;
+                for (let n = 0; n < nbytes; n += step) {
+                    const a = (start + n) % nbytes;
+                    if (a + pat.length > nbytes) continue;
+                    let ok = true;
+                    for (let k = 0; k < pat.length && ok; k++) ok = byteAt(a + k) === pat[k];
+                    if (ok) {
+                        memHit = { addr: a, len: pat.length };
+                        document.getElementById("mem-follow").value = "";
+                        memBase = a;
+                        dbgRefreshMemPane();
+                        return;
+                    }
+                }
+                memHit = null;
+                msg.textContent = "not found";
+                dbgRefreshMemPane();
+            }
+
+            function memLayout() {
+                const el = document.getElementById("dbg-mem");
+                const cs = getComputedStyle(el);
+                const lh = parseFloat(cs.lineHeight) || 18;
+                const ch = parseFloat(cs.fontSize) * 0.6 || 8;
+                /* address + 8 words + ascii: 7 + 8*7 + 2 + 16 characters */
+                memRowBytes = el.clientWidth - 16 >= 81 * ch ? 16 : 8;
+                return Math.max(1, Math.floor((el.clientHeight - 8) / lh));
+            }
+
+            function dbgRefreshMemPane() {
+                const pane = document.getElementById("dbg-mempane");
+                const el = document.getElementById("dbg-mem");
+                if (!el || pane.parentElement.classList.contains("mem-collapsed")) return;
+                if (!window._wasm_ram_ptr || !Module.HEAPU16) return;
+                const rows = memLayout();
+                const follow = document.getElementById("mem-follow").value;
+                if (follow !== "")
+                    memBase = window._wasm_get_reg(parseInt(follow));
+                memBase &= ~(memRowBytes - 1);
+                const ram = window._wasm_ram_ptr() >>> 1;
+                const nbytes = window._wasm_ram_words() * 2;
+                const cur = new Map();
+                let html = "";
+                for (let r = 0; r < rows; r++) {
+                    const row = memBase + r * memRowBytes;
+                    let line = toOct6(row) + ":";
+                    let ascii = "";
+                    for (let b = 0; b < memRowBytes; b += 2) {
+                        const a = row + b;
+                        if (a >= nbytes) {
+                            line += ' <span class="na">------</span>';
+                            ascii += "  ";
+                            continue;
+                        }
+                        const w = Module.HEAPU16[ram + (a >> 1)];
+                        cur.set(a, w);
+                        const old = memPrev.get(a);
+                        const txt = toOct6(w);
+                        const hit = memHit && a + 1 >= memHit.addr && a < memHit.addr + memHit.len;
+                        line +=
+                            " " +
+                            (hit
+                                ? '<span class="hit">' + txt + "</span>"
+                                : old !== undefined && old !== w
+                                  ? '<span class="chg">' + txt + "</span>"
+                                  : txt);
+                        for (const c of [w & 0x7f, (w >> 8) & 0x7f])
+                            ascii += c >= 0x20 && c < 0x7f ? String.fromCharCode(c) : ".";
+                    }
+                    html += line + '  <span class="ascii">' + escHtml(ascii) + "</span>\n";
+                }
+                el.innerHTML = html;
+                memPrev = cur;
+            }
+
+            function dbgLog(msg) {
+                const el = document.getElementById("dbg-log");
+                if (!el) return;
+                el.textContent += msg + "\n";
+                el.scrollTop = el.scrollHeight;
+                const lines = el.textContent.split("\n");
+                if (lines.length > 500) {
+                    el.textContent = lines.slice(-400).join("\n");
+                }
+            }
+
+            function dbgRefreshMicro() {
+                const el = document.getElementById("dbg-micro");
+                if (!el || !powered || !window._wasm_get_mpc) return;
+                const mpc = window._wasm_get_mpc();
+                let label = "",
+                    desc = "";
+                try {
+                    label = window._wasm_get_mpc_label(mpc) || "";
+                    desc = window._wasm_get_mpc_desc(mpc) || "";
+                } catch (_) {}
+                const ba = window._wasm_get_ba();
+                el.textContent =
+                    "MPC=" + mpc.toString(8).padStart(3, "0") +
+                    "  IR=" + toOct6(window._wasm_get_ir()) +
+                    "  PSW=" + toOct6(window._wasm_get_psw()) + "\n" +
+                    "OP   " + (label || "-") + "\n" +
+                    (desc ? "     " + desc + "\n" : "") +
+                    "ALU  OUT=" + toOct6(window._wasm_get_alu_out()) +
+                    "  COUT=" + window._wasm_get_alu_cout() + "\n" +
+                    "BUS  BA=" + ba.toString(8).padStart(6, "0") +
+                    "  DATA=" + toOct6(window._wasm_get_udata()) + "\n" +
+                    "SHR  B=" + toOct6(window._wasm_get_b_reg()) +
+                    "  BX=" + toOct6(window._wasm_get_bx_reg());
+            }
+
+            /* Left column sections fold on a click on their header */
+            (function () {
+                const saved = (localStorage.getItem("ll34.dbgFolded") || "").split(",");
+                document.querySelectorAll(".dbg-sec").forEach((sec) => {
+                    if (saved.includes(sec.dataset.sec)) sec.classList.add("collapsed");
+                    sec.querySelector(".dbg-sec-hdr").addEventListener("click", () => {
+                        sec.classList.toggle("collapsed");
+                        const folded = [...document.querySelectorAll(".dbg-sec.collapsed")].map(
+                            (x) => x.dataset.sec,
+                        );
+                        localStorage.setItem("ll34.dbgFolded", folded.join(","));
+                    });
+                });
+            })();
+
+            function dbgRefreshAll() {
+                if (!powered || !window._wasm_get_reg) return;
+                dbgUpdateStatus();
+                dbgRefreshRegs();
+                dbgRefreshMicro();
+                dbgRefreshMMU();
+                dbgRefreshDisasm();
+                dbgRefreshBpList();
+                dbgRefreshMemPane();
+            }
+
+            /* After the CPU has executed anything, the listing shows the PC again */
+            function dbgFollowPC() {
+                dbgDisasmBase = null;
+                const base = document.getElementById("dbg-disasm-base");
+                if (base) base.value = "";
+            }
+
+            /* Called on CPU halt: refresh panels, log only spontaneous halts */
+            function consoleHaltDump(reason) {
+                if (!window._wasm_get_reg) return;
+                dbgFollowPC();
+                if (reason >= 2) {
+                    const pc = window._wasm_get_reg(7);
+                    dbgLog("--- CPU halted at PC=" + toOct6(pc) + " ---");
+                }
+                dbgRefreshAll();
+            }
+
+            /* Power state of the debugger view */
+            function dbgUpdatePower() {
+                document.getElementById("dbg-sub-debug").classList.toggle("off", !powered);
+                dbgUpdateStatus();
+                if (powered) dbgRefreshAll();
+            }
+
+            /* Called when entering the Debug tab */
+            function dbgOnEnter() {
+                dbgUpdatePower();
+            }
+
+            /* ================================================================
+             * Logic Analyzer probe UI
+             * ================================================================ */
+            const LA_RULER_H = 24; /* must match .la-lbl-hdr */
+            const LA_ROW_H = 32; /* must match .la-lbl */
+            const LA_CYCLE_NS = 180; /* short micro-cycle, for estimates */
+            let laPrevState = -1;
+            let laCatalogBuilt = false;
+            const laInfo = {}; /* pin name -> { alias, desc } */
+
+            /* Label for a signal: alias when it has one, else the pin */
+            function laLabel(name) {
+                const a = laInfo[name] && laInfo[name].alias;
+                return a || name;
+            }
+
+            /* Current capture, read from the WASM buffer */
+            const la = {
+                names: [], /* selected signals, in order */
+                is1: [],
+                data: [], /* data[sig][sample] */
+                t: null, /* sample times in ns, relative to the first sample */
+                tEnd: 1,
+                trig: -1, /* trigger sample index */
+                t0: 0, /* time origin shown on the ruler (trigger) */
+                v0: 0, /* visible time window */
+                v1: 1,
+                cursor: -1, /* sample under the mouse */
+            };
+
+            function laFmtNs(ns) {
+                const a = Math.abs(ns);
+                const sign = ns < 0 ? "−" : ns > 0 ? "+" : "";
+                if (a >= 1e6) return sign + (a / 1e6).toPrecision(4) + " ms";
+                if (a >= 1e3) return sign + (a / 1e3).toPrecision(4) + " µs";
+                return sign + Math.round(a) + " ns";
+            }
+
+            function laSelected() {
+                const n = window._wasm_probe_sel_count();
+                const out = [];
+                for (let i = 0; i < n; i++)
+                    out.push({
+                        name: window._wasm_probe_sel_name(i),
+                        is1: window._wasm_probe_sel_is_1bit(i) === 1,
+                    });
+                return out;
+            }
+
+            /* Catalog: named groups first, then chips of K1 and K2, Emulator last */
+            const LA_GROUP_ORDER = ["Registers", "Unibus", "Microsequencer", "ALU", "Decode & traps"];
+
+            function laGroupRank(g) {
+                const k = LA_GROUP_ORDER.indexOf(g);
+                if (k >= 0) return k;
+                if (g.startsWith("K1:")) return 100;
+                if (g.startsWith("K2:")) return 200;
+                if (g === "Emulator") return 400;
+                return 300;
+            }
+
+            function laBuildCatalog() {
+                const el = document.getElementById("la-catalog");
+                if (!el || !window._wasm_probe_sig_count || laCatalogBuilt) return;
+                const n = window._wasm_probe_sig_count();
+                const sigs = [];
+                for (let i = 0; i < n; i++) {
+                    const name = window._wasm_probe_sig_name(i);
+                    const desc = window._wasm_probe_sig_desc(i);
+                    /* Tolerate an older module without these functions */
+                    let alias = "",
+                        group = "";
+                    try {
+                        alias = window._wasm_probe_sig_alias(i) || "";
+                        group = window._wasm_probe_sig_group(i) || "";
+                    } catch (_) {}
+                    laInfo[name] = { alias: alias, desc: desc };
+                    const parts = name.split(":");
+                    const g = group || (parts.length === 3 ? parts[0] + ":" + parts[1] : "Other");
+                    sigs.push({ i, name, alias, desc, g });
+                }
+                /* Stable sort: table order is kept inside a group */
+                sigs.sort((a, b) => laGroupRank(a.g) - laGroupRank(b.g) || (a.g < b.g ? -1 : a.g > b.g ? 1 : 0) || a.i - b.i);
+                let html = "";
+                let group = null;
+                for (const x of sigs) {
+                    let chip = "";
+                    try {
+                        chip = window._wasm_probe_chip_name(x.g) || "";
+                    } catch (_) {
+                        /* older module without chip names */
+                    }
+                    if (x.g !== group) {
+                        group = x.g;
+                        html +=
+                            '<div class="la-grp" data-grp="' + escHtml(x.g) + '">' + escHtml(x.g) +
+                            (chip ? '<span class="la-grp-name">' + escHtml(chip) + "</span>" : "") +
+                            "</div>";
+                    }
+                    const key = (x.name + " " + x.alias + " " + x.desc + " " + chip).toLowerCase();
+                    html +=
+                        '<div class="la-sig-row" data-name="' + escHtml(x.name) +
+                        '" data-grp="' + escHtml(x.g) + '" data-key="' + escHtml(key) +
+                        '" title="' + escHtml(x.desc) + '">' +
+                        '<span class="mark">+</span>' +
+                        '<span class="la-sig-name">' + escHtml(x.name) + "</span>" +
+                        (x.alias && x.alias !== x.name
+                            ? '<span class="la-sig-alias">' + escHtml(x.alias) + "</span>"
+                            : "") +
+                        '<span class="la-sig-desc">' + escHtml(x.desc) + "</span></div>";
+                }
+                el.innerHTML = html;
+                laCatalogBuilt = true;
+            }
+
+            function laFilterCatalog() {
+                const q = document.getElementById("la-search").value.trim().toLowerCase();
+                const visible = new Set();
+                document.querySelectorAll("#la-catalog .la-sig-row").forEach((row) => {
+                    const show = !q || row.dataset.key.includes(q);
+                    row.style.display = show ? "" : "none";
+                    if (show) visible.add(row.dataset.grp);
+                });
+                document.querySelectorAll("#la-catalog .la-grp").forEach((g) => {
+                    g.style.display = visible.has(g.dataset.grp) ? "" : "none";
+                });
+            }
+
+            /* Selection changed: catalog marks, trigger list, labels, data */
+            function laBuildSelected() {
+                if (!window._wasm_probe_sel_count) return;
+                const sel = laSelected();
+                const names = new Set(sel.map((s) => s.name));
+                document.querySelectorAll("#la-catalog .la-sig-row").forEach((row) => {
+                    const on = names.has(row.dataset.name);
+                    row.classList.toggle("on", on);
+                    row.querySelector(".mark").textContent = on ? "✓" : "+";
+                });
+
+                const trig = document.getElementById("la-trig-sig");
+                const prev = trig.value;
+                trig.innerHTML =
+                    '<option value="">Free run</option>' +
+                    sel
+                        .map((s) => '<option value="' + escHtml(s.name) + '">' + escHtml(laLabel(s.name)) + "</option>")
+                        .join("");
+                trig.value = names.has(prev) ? prev : "";
+                laUpdateTrigCond();
+                laLoadCapture();
+            }
+
+            function laTrigIs1bit() {
+                const name = document.getElementById("la-trig-sig").value;
+                const s = laSelected().find((x) => x.name === name);
+                return s ? s.is1 : false;
+            }
+
+            function laUpdateTrigCond() {
+                const name = document.getElementById("la-trig-sig").value;
+                const cond = document.getElementById("la-trig-cond");
+                const val = document.getElementById("la-trig-val");
+                const mask = document.getElementById("la-trig-mask");
+                const prev = cond.value;
+                let opts = [];
+                if (!name) opts = [];
+                else if (laTrigIs1bit())
+                    opts = [
+                        ["rise", "rising edge"],
+                        ["fall", "falling edge"],
+                        ["high", "high"],
+                        ["low", "low"],
+                    ];
+                else
+                    opts = [
+                        ["becomes", "becomes"],
+                        ["equals", "equals"],
+                    ];
+                cond.innerHTML = opts.map((o) => '<option value="' + o[0] + '">' + o[1] + "</option>").join("");
+                if (opts.some((o) => o[0] === prev)) cond.value = prev;
+                cond.style.display = name ? "" : "none";
+                const bus = name && !laTrigIs1bit();
+                val.style.display = bus ? "" : "none";
+                mask.style.display = bus ? "" : "none";
+            }
+
+            function laUpdateWindow() {
+                const depth = parseInt(document.getElementById("la-depth").value) || 512;
+                const rate = Math.max(1, parseInt(document.getElementById("la-rate").value) || 1);
+                document.getElementById("la-window").textContent =
+                    "window ≈ " + laFmtNs(depth * rate * LA_CYCLE_NS).replace("+", "");
+            }
+
+            function laSetStatus(text, cls) {
+                const el = document.getElementById("la-status");
+                el.textContent = text;
+                el.className = cls || "";
+            }
+
+            function laArm() {
+                if (!powered || !window._wasm_probe_arm) return;
+                if (window._wasm_probe_sel_count() === 0) {
+                    laSetStatus("Add a signal first", "error");
+                    return;
+                }
+                const depth = parseInt(document.getElementById("la-depth").value) || 512;
+                const rate = Math.max(1, parseInt(document.getElementById("la-rate").value) || 1);
+                const pos = parseInt(document.getElementById("la-pos").value);
+                const name = document.getElementById("la-trig-sig").value;
+                const cond = document.getElementById("la-trig-cond").value;
+
+                if (!name) {
+                    window._wasm_probe_clear_trigger();
+                } else if (laTrigIs1bit()) {
+                    const value = cond === "rise" || cond === "high" ? 1 : 0;
+                    window._wasm_probe_set_trigger(name, value, 1);
+                    window._wasm_probe_set_trigger_edge(cond === "rise" || cond === "fall" ? 1 : 0);
+                } else {
+                    const value = parseOct(document.getElementById("la-trig-val").value);
+                    if (value === null) {
+                        laSetStatus("Trigger value: octal number", "error");
+                        return;
+                    }
+                    const m = parseOct(document.getElementById("la-trig-mask").value);
+                    window._wasm_probe_set_trigger(name, value, m === null ? 0xffffffff : m);
+                    window._wasm_probe_set_trigger_edge(cond === "becomes" ? 1 : 0);
+                }
+                window._wasm_probe_set_depth(depth);
+                window._wasm_probe_set_rate(rate);
+                window._wasm_probe_set_pos(isNaN(pos) ? 50 : pos);
+                window._wasm_probe_arm();
+                laPrevState = -1;
+                laUpdateStatus();
+            }
+
+            let laPrevHalted = null;
+            function laUpdateStatus() {
+                if (!window._wasm_probe_state) return;
+                const st = window._wasm_probe_state();
+                const halted = !!(window._wasm_is_halted && window._wasm_is_halted());
+                if (st === laPrevState && halted === laPrevHalted) return;
+                const h = halted ? " (CPU halted)" : "";
+                if (st === 0) laSetStatus(laPrevState > 0 ? "Stopped" : "Idle");
+                else if (st === 1) laSetStatus("Waiting for trigger" + h, "armed");
+                else if (st === 2) laSetStatus("Capturing" + h, "capturing");
+                else if (st === 3) {
+                    laSetStatus("Done: " + window._wasm_probe_sample_count() + " samples", "done");
+                    if (laPrevState !== 3) laLoadCapture();
+                }
+                laPrevState = st;
+                laPrevHalted = halted;
+            }
+
+            /* Read the capture buffer for the selected signals */
+            function laLoadCapture() {
+                if (!window._wasm_probe_sample_count) return;
+                const sel = laSelected();
+                const n = window._wasm_probe_state() === 3 ? window._wasm_probe_sample_count() : 0;
+                la.names = sel.map((s) => s.name);
+                la.is1 = sel.map((s) => s.is1);
+                la.t = new Float64Array(n);
+                for (let i = 0; i < n; i++) la.t[i] = window._wasm_probe_read_ns(i);
+                la.data = sel.map((_, s) => {
+                    const d = new Uint32Array(n);
+                    for (let i = 0; i < n; i++) d[i] = window._wasm_probe_read(i, s);
+                    return d;
+                });
+                const step = n > 1 ? la.t[n - 1] - la.t[n - 2] : LA_CYCLE_NS;
+                la.tEnd = n ? la.t[n - 1] + step : 1;
+                la.trig = n ? window._wasm_probe_trigger_index() : -1;
+                la.t0 = la.trig >= 0 ? la.t[la.trig] : 0;
+                if (n) laDefaultView();
+                la.cursor = -1;
+                laBuildLabels();
+                laDraw();
+            }
+
+            /* About 8 px per sample, centered on the trigger (or the start) */
+            function laDefaultView() {
+                const W = Math.max(100, document.getElementById("la-canvas-wrap").clientWidth);
+                const n = la.t.length;
+                const span = Math.min(la.tEnd, (W / 8) * (la.tEnd / n));
+                const center = la.trig >= 0 ? la.t0 : span / 2;
+                la.v0 = Math.min(Math.max(center - span / 2, 0), la.tEnd - span);
+                la.v1 = la.v0 + span;
+            }
+
+            function laBuildLabels() {
+                const el = document.getElementById("la-labels");
+                let html = '<div class="la-lbl-hdr"></div>';
+                la.names.forEach((nm, s) => {
+                    const info = laInfo[nm] || {};
+                    const tip = nm + (info.desc ? ": " + info.desc : "");
+                    html +=
+                        '<div class="la-lbl"><span class="nm" title="' + escHtml(tip) + '">' +
+                        escHtml(laLabel(nm)) + '</span><span class="val" data-sig="' + s + '"></span>' +
+                        '<button class="rm" data-name="' + escHtml(nm) + '" title="Remove">×</button></div>';
+                });
+                el.innerHTML = html;
+            }
+
+            /* Last sample at or before time t */
+            function laSampleAt(t) {
+                const a = la.t;
+                if (!a || !a.length || t < a[0]) return -1;
+                let lo = 0,
+                    hi = a.length - 1;
+                while (lo < hi) {
+                    const mid = (lo + hi + 1) >> 1;
+                    if (a[mid] <= t) lo = mid;
+                    else hi = mid - 1;
+                }
+                return lo;
+            }
+
+            function laFmtVal(v, is1) {
+                return is1 ? (v ? "1" : "0") : v.toString(8);
+            }
+
+            function laDraw() {
+                const wrap = document.getElementById("la-canvas-wrap");
+                const cv = document.getElementById("la-canvas");
+                if (!wrap || !cv) return;
+                const W = Math.max(100, wrap.clientWidth);
+                const H = LA_RULER_H + Math.max(1, la.names.length) * LA_ROW_H;
+                const dpr = window.devicePixelRatio || 1;
+                cv.width = W * dpr;
+                cv.height = H * dpr;
+                cv.style.width = W + "px";
+                cv.style.height = H + "px";
+                const g = cv.getContext("2d");
+                g.setTransform(dpr, 0, 0, dpr, 0, 0);
+                g.clearRect(0, 0, W, H);
+                const font = getComputedStyle(document.getElementById("tab-la")).fontFamily;
+                g.font = "12px " + font;
+                g.textBaseline = "middle";
+
+                /* Ruler background and row separators */
+                g.fillStyle = "#161b22";
+                g.fillRect(0, 0, W, LA_RULER_H);
+                g.fillStyle = "#30363d";
+                g.fillRect(0, LA_RULER_H - 1, W, 1);
+                for (let s = 0; s < la.names.length; s++) {
+                    g.fillStyle = "#21262d";
+                    g.fillRect(0, LA_RULER_H + (s + 1) * LA_ROW_H - 1, W, 1);
+                }
+
+                const n = la.t ? la.t.length : 0;
+                laSyncScroll(W, n);
+                if (!n) {
+                    g.fillStyle = "#6e7681";
+                    g.fillText(
+                        la.names.length ? "No capture. Press Arm." : "Pick signals in the list on the left.",
+                        12,
+                        LA_RULER_H + LA_ROW_H / 2,
+                    );
+                    return;
+                }
+
+                const span = la.v1 - la.v0;
+                const X = (t) => ((t - la.v0) / span) * W;
+
+                /* Time ticks, 1-2-5 steps, labels relative to the trigger */
+                const raw = span / (W / 110);
+                const p10 = Math.pow(10, Math.floor(Math.log10(raw)));
+                const stepNs = [1, 2, 5, 10].map((k) => k * p10).find((v) => v >= raw);
+                const first = Math.ceil((la.v0 - la.t0) / stepNs) * stepNs + la.t0;
+                for (let t = first; t <= la.v1; t += stepNs) {
+                    const x = Math.round(X(t)) + 0.5;
+                    g.fillStyle = "#21262d";
+                    g.fillRect(x, LA_RULER_H, 1, H - LA_RULER_H);
+                    g.fillStyle = "#30363d";
+                    g.fillRect(x, LA_RULER_H - 6, 1, 6);
+                    g.fillStyle = "#8b949e";
+                    g.fillText(laFmtNs(t - la.t0), x + 3, LA_RULER_H / 2);
+                }
+
+                const iFirst = Math.max(0, laSampleAt(la.v0));
+                const iLast = Math.min(n - 1, Math.max(0, laSampleAt(la.v1)));
+                const tAfter = (i) => (i + 1 < n ? la.t[i + 1] : la.tEnd);
+
+                for (let s = 0; s < la.names.length; s++) {
+                    const d = la.data[s];
+                    const top = LA_RULER_H + s * LA_ROW_H + 6;
+                    const bot = LA_RULER_H + (s + 1) * LA_ROW_H - 7;
+                    const mid = (top + bot) / 2;
+                    if (la.is1[s]) {
+                        g.strokeStyle = "#3fb950";
+                        g.lineWidth = 1.5;
+                        g.beginPath();
+                        let y = d[iFirst] ? top : bot;
+                        g.moveTo(Math.max(0, X(la.t[iFirst])), y);
+                        for (let i = iFirst + 1; i <= iLast; i++) {
+                            const ny = d[i] ? top : bot;
+                            if (ny !== y) {
+                                const x = X(la.t[i]);
+                                g.lineTo(x, y);
+                                g.lineTo(x, ny);
+                                y = ny;
+                            }
+                        }
+                        g.lineTo(Math.min(W, X(tAfter(iLast))), y);
+                        g.stroke();
+                    } else {
+                        g.strokeStyle = "#79c0ff";
+                        g.lineWidth = 1;
+                        let a = iFirst;
+                        while (a <= iLast) {
+                            let b = a;
+                            while (b + 1 <= iLast && d[b + 1] === d[a]) b++;
+                            const xa = X(la.t[a]);
+                            const xb = X(tAfter(b));
+                            const k = Math.min(4, (xb - xa) / 2);
+                            g.beginPath();
+                            g.moveTo(xa, mid);
+                            g.lineTo(xa + k, top);
+                            g.lineTo(xb - k, top);
+                            g.lineTo(xb, mid);
+                            g.lineTo(xb - k, bot);
+                            g.lineTo(xa + k, bot);
+                            g.closePath();
+                            g.stroke();
+                            const txt = d[a].toString(8);
+                            const tw = g.measureText(txt).width;
+                            const l = Math.max(xa, 0),
+                                r = Math.min(xb, W);
+                            if (r - l > tw + 2 * k + 4) {
+                                g.fillStyle = "#c9d1d9";
+                                g.fillText(txt, (l + r - tw) / 2, mid);
+                            }
+                            a = b + 1;
+                        }
+                    }
+                }
+
+                /* Trigger marker */
+                if (la.trig >= 0) {
+                    const x = Math.round(X(la.t0)) + 0.5;
+                    if (x >= 0 && x <= W) {
+                        g.strokeStyle = "#f0883e";
+                        g.lineWidth = 1;
+                        g.setLineDash([4, 3]);
+                        g.beginPath();
+                        g.moveTo(x, LA_RULER_H);
+                        g.lineTo(x, H);
+                        g.stroke();
+                        g.setLineDash([]);
+                        g.fillStyle = "#f0883e";
+                        g.beginPath();
+                        g.moveTo(x - 5, 2);
+                        g.lineTo(x + 5, 2);
+                        g.lineTo(x, 10);
+                        g.closePath();
+                        g.fill();
+                    }
+                }
+
+                /* Cursor */
+                if (la.cursor >= 0) {
+                    const x = Math.round(X(la.t[la.cursor])) + 0.5;
+                    g.strokeStyle = "#e6edf3";
+                    g.globalAlpha = 0.5;
+                    g.beginPath();
+                    g.moveTo(x, LA_RULER_H);
+                    g.lineTo(x, H);
+                    g.stroke();
+                    g.globalAlpha = 1;
+                }
+            }
+
+            /* Horizontal scrollbar: thumb position and width follow the view */
+            function laSyncScroll(W, n) {
+                const track = document.getElementById("la-hscroll");
+                const thumb = document.getElementById("la-hthumb");
+                const tw = track.clientWidth;
+                if (!n) {
+                    thumb.style.display = "none";
+                    return;
+                }
+                thumb.style.display = "";
+                const w = Math.max(24, (tw * (la.v1 - la.v0)) / la.tEnd);
+                thumb.style.width = w + "px";
+                thumb.style.left = ((tw - w) * la.v0) / Math.max(1, la.tEnd - (la.v1 - la.v0)) + "px";
+            }
+
+            function laUpdateCursorText() {
+                const c = la.cursor;
+                document.querySelectorAll("#la-labels .val").forEach((el) => {
+                    const s = parseInt(el.dataset.sig);
+                    el.textContent = c >= 0 ? laFmtVal(la.data[s][c], la.is1[s]) : "";
+                });
+                document.getElementById("la-cursor").textContent =
+                    c >= 0
+                        ? "t = " + laFmtNs(la.t[c] - la.t0) + "   sample " + c +
+                          (la.trig >= 0 ? " (" + (c - la.trig >= 0 ? "+" : "") + (c - la.trig) + " from trigger)" : "")
+                        : "";
+            }
+
+            function laInitWave() {
+                const cv = document.getElementById("la-canvas");
+                const timeAt = (e) => {
+                    const r = cv.getBoundingClientRect();
+                    return la.v0 + ((e.clientX - r.left) / r.width) * (la.v1 - la.v0);
+                };
+                const clampView = (v0, span) => {
+                    span = Math.min(Math.max(span, 4 * LA_CYCLE_NS), la.tEnd);
+                    v0 = Math.min(Math.max(v0, 0), la.tEnd - span);
+                    la.v0 = v0;
+                    la.v1 = v0 + span;
+                };
+                cv.addEventListener(
+                    "wheel",
+                    (e) => {
+                        if (!la.t || !la.t.length) return;
+                        e.preventDefault();
+                        const tm = timeAt(e);
+                        const span = la.v1 - la.v0;
+                        const ns = span * (e.deltaY > 0 ? 1.25 : 0.8);
+                        clampView(tm - ((tm - la.v0) * ns) / span, ns);
+                        laDraw();
+                    },
+                    { passive: false },
+                );
+                let drag = null;
+                cv.addEventListener("pointerdown", (e) => {
+                    if (!la.t || !la.t.length) return;
+                    cv.setPointerCapture(e.pointerId);
+                    cv.classList.add("dragging");
+                    drag = { x: e.clientX, v0: la.v0 };
+                });
+                cv.addEventListener("pointermove", (e) => {
+                    if (!la.t || !la.t.length) return;
+                    if (drag) {
+                        const span = la.v1 - la.v0;
+                        const dt = ((drag.x - e.clientX) / cv.getBoundingClientRect().width) * span;
+                        clampView(drag.v0 + dt, span);
+                    }
+                    la.cursor = laSampleAt(timeAt(e));
+                    laUpdateCursorText();
+                    laDraw();
+                });
+                const endDrag = (e) => {
+                    if (!drag) return;
+                    cv.releasePointerCapture(e.pointerId);
+                    cv.classList.remove("dragging");
+                    drag = null;
+                };
+                cv.addEventListener("pointerup", endDrag);
+                cv.addEventListener("pointercancel", endDrag);
+                cv.addEventListener("pointerleave", () => {
+                    if (drag) return;
+                    la.cursor = -1;
+                    laUpdateCursorText();
+                    laDraw();
+                });
+                {
+                    const track = document.getElementById("la-hscroll");
+                    const thumb = document.getElementById("la-hthumb");
+                    const panTo = (v0) => {
+                        const span = la.v1 - la.v0;
+                        la.v0 = Math.min(Math.max(v0, 0), la.tEnd - span);
+                        la.v1 = la.v0 + span;
+                        laDraw();
+                    };
+                    let grab = null;
+                    thumb.addEventListener("pointerdown", (e) => {
+                        e.stopPropagation();
+                        thumb.setPointerCapture(e.pointerId);
+                        thumb.classList.add("dragging");
+                        grab = { x: e.clientX, v0: la.v0 };
+                    });
+                    thumb.addEventListener("pointermove", (e) => {
+                        if (!grab) return;
+                        const free = track.clientWidth - thumb.offsetWidth;
+                        const range = la.tEnd - (la.v1 - la.v0);
+                        if (free > 0) panTo(grab.v0 + ((e.clientX - grab.x) / free) * range);
+                    });
+                    thumb.addEventListener("pointerup", (e) => {
+                        thumb.releasePointerCapture(e.pointerId);
+                        thumb.classList.remove("dragging");
+                        grab = null;
+                    });
+                    /* Click on the track: one page towards the click */
+                    track.addEventListener("pointerdown", (e) => {
+                        if (!la.t || !la.t.length) return;
+                        const span = la.v1 - la.v0;
+                        const left = e.clientX < thumb.getBoundingClientRect().left;
+                        panTo(la.v0 + (left ? -span : span));
+                    });
+                }
+                document.getElementById("la-fit-btn").addEventListener("click", () => {
+                    la.v0 = 0;
+                    la.v1 = la.tEnd;
+                    laDraw();
+                });
+                new ResizeObserver(() => {
+                    if (activeTab === "la") laDraw();
+                }).observe(document.getElementById("la-canvas-wrap"));
+
+                /* Catalog width and folding, kept across visits */
+                {
+                    const cols = document.querySelector(".la-cols");
+                    const cat = document.getElementById("la-cat");
+                    const splitter = document.getElementById("la-cat-splitter");
+                    const MIN = 340;
+                    let width = Math.max(MIN, parseInt(localStorage.getItem("ll34.laCatWidth")) || MIN);
+                    const setWidth = (w) => {
+                        width = Math.round(Math.max(MIN, Math.min(w, cols.clientWidth - 400)));
+                        cat.style.width = width + "px";
+                    };
+                    cat.style.width = width + "px";
+                    if (localStorage.getItem("ll34.laCatHidden") === "1") cols.classList.add("cat-hidden");
+                    document.getElementById("la-cat-toggle").addEventListener("click", () => {
+                        cols.classList.toggle("cat-hidden");
+                        localStorage.setItem("ll34.laCatHidden", cols.classList.contains("cat-hidden") ? "1" : "0");
+                    });
+                    splitter.addEventListener("pointerdown", (e) => {
+                        splitter.setPointerCapture(e.pointerId);
+                        splitter.classList.add("dragging");
+                    });
+                    splitter.addEventListener("pointermove", (e) => {
+                        if (!splitter.classList.contains("dragging")) return;
+                        setWidth(e.clientX - cols.getBoundingClientRect().left);
+                    });
+                    splitter.addEventListener("pointerup", (e) => {
+                        splitter.releasePointerCapture(e.pointerId);
+                        splitter.classList.remove("dragging");
+                        localStorage.setItem("ll34.laCatWidth", String(width));
+                    });
+                }
+
+                /* Catalog and labels */
+                document.getElementById("la-search").addEventListener("input", laFilterCatalog);
+                document.getElementById("la-catalog").addEventListener("click", (e) => {
+                    const row = e.target.closest(".la-sig-row");
+                    if (!row) return;
+                    const name = row.dataset.name;
+                    if (row.classList.contains("on")) window._wasm_probe_rm(name);
+                    else if (window._wasm_probe_add(name) < 0) {
+                        laSetStatus("At most 16 signals", "error");
+                        return;
+                    }
+                    laBuildSelected();
+                });
+                document.getElementById("la-labels").addEventListener("click", (e) => {
+                    const rm = e.target.closest(".rm");
+                    if (!rm) return;
+                    window._wasm_probe_rm(rm.dataset.name);
+                    laBuildSelected();
+                });
+
+                /* Configuration */
+                document.getElementById("la-trig-sig").addEventListener("change", laUpdateTrigCond);
+                document.getElementById("la-depth").addEventListener("change", laUpdateWindow);
+                document.getElementById("la-rate").addEventListener("input", laUpdateWindow);
+                document.getElementById("la-arm-btn").addEventListener("click", laArm);
+                document.getElementById("la-disarm-btn").addEventListener("click", () => {
+                    if (window._wasm_probe_disarm) window._wasm_probe_disarm();
+                    laUpdateStatus();
+                });
+                laUpdateWindow();
+            }
+
+            /* Called when entering the LA tab */
+            function laOnEnter() {
+                laBuildCatalog();
+                laBuildSelected();
+                laUpdateStatus();
+            }
+
+            /* ================================================================
+             * Debug: click to print coordinates
+             * ================================================================ */
+            if (PANEL_DEBUG) {
+                document
+                    .getElementById("panel-overlay")
+                    .addEventListener("click", (e) => {
+                        const rect = document
+                            .getElementById("panel-img")
+                            .getBoundingClientRect();
+                        const x = Math.round(
+                            ((e.clientX - rect.left) / rect.width) *
+                                PANEL_IMG_W,
+                        );
+                        const y = Math.round(
+                            ((e.clientY - rect.top) / rect.height) *
+                                PANEL_IMG_H,
+                        );
+                        console.log(`x=${x}, y=${y}`);
+                    });
+            }
+
+            /* ================================================================
+             * Emscripten module, defined before ll-34.js is loaded
+             * ================================================================ */
+            /* Build version, set at deploy time. It goes into the URLs of
+             * ll-34.js and ll-34.wasm so a browser never mixes builds. */
+            const LL34_BUILD = "dev";
+            var Module = {
+                locateFile: (path) => path + "?v=" + LL34_BUILD,
+                print: () => {},
+                printErr: (s) => {
+                    if (s && !s.startsWith("wasm")) dbgLog("[ll-34] " + s);
+                },
+
+                onRuntimeInitialized: function () {
+                    /* Wrap exported C functions */
+                    window._wasm_power_on = Module.cwrap(
+                        "wasm_power_on",
+                        null,
+                        [],
+                    );
+                    window._wasm_power_off = Module.cwrap(
+                        "wasm_power_off",
+                        null,
+                        [],
+                    );
+                    window._wasm_reset = Module.cwrap("wasm_reset", null, []);
+                    window._wasm_load_rk_image = Module.cwrap(
+                        "wasm_load_rk_image",
+                        null,
+                        ["number", "string"],
+                    );
+                    window._wasm_console_key = Module.cwrap(
+                        "wasm_console_key",
+                        null,
+                        ["number"],
+                    );
+                    window._wasm_rx_push = Module.cwrap("wasm_rx_push", null, [
+                        "number",
+                    ]);
+                    window._wasm_tx_poll = Module.cwrap(
+                        "wasm_tx_poll",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_display_addr = Module.cwrap(
+                        "wasm_get_display_addr",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_display_data = Module.cwrap(
+                        "wasm_get_display_data",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_leds = Module.cwrap(
+                        "wasm_get_leds",
+                        "number",
+                        [],
+                    );
+                    window._wasm_set_odt = Module.cwrap(
+                        "wasm_set_odt",
+                        null,
+                        [],
+                    );
+                    window._wasm_load_lda = Module.cwrap(
+                        "wasm_load_lda",
+                        "number",
+                        ["string"],
+                    );
+                    window._wasm_load_asc = Module.cwrap(
+                        "wasm_load_asc",
+                        "number",
+                        ["string"],
+                    );
+
+                    /* Debug console */
+                    window._wasm_get_reg = Module.cwrap(
+                        "wasm_get_reg",
+                        "number",
+                        ["number"],
+                    );
+                    window._wasm_get_psw = Module.cwrap(
+                        "wasm_get_psw",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_ir = Module.cwrap(
+                        "wasm_get_ir",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_us = Module.cwrap(
+                        "wasm_get_us",
+                        "number",
+                        [],
+                    );
+                    window._wasm_is_halted = Module.cwrap(
+                        "wasm_is_halted",
+                        "number",
+                        [],
+                    );
+                    window._wasm_halt = Module.cwrap("wasm_halt", null, []);
+                    window._wasm_run = Module.cwrap("wasm_run", null, []);
+                    window._wasm_step = Module.cwrap("wasm_step", null, []);
+                    window._wasm_ustep_n = Module.cwrap("wasm_ustep_n", null, [
+                        "number",
+                    ]);
+                    window._wasm_poll_halt = Module.cwrap(
+                        "wasm_poll_halt",
+                        "number",
+                        [],
+                    );
+                    window._wasm_examine = Module.cwrap(
+                        "wasm_examine",
+                        "number",
+                        ["number"],
+                    );
+                    window._wasm_deposit = Module.cwrap("wasm_deposit", null, [
+                        "number",
+                        "number",
+                    ]);
+                    window._wasm_ram_ptr = Module.cwrap(
+                        "wasm_ram_ptr",
+                        "number",
+                        [],
+                    );
+                    window._wasm_ram_words = Module.cwrap(
+                        "wasm_ram_words",
+                        "number",
+                        [],
+                    );
+                    window._wasm_disasm = Module.cwrap(
+                        "wasm_disasm",
+                        "string",
+                        ["number"],
+                    );
+                    window._wasm_disasm_len = Module.cwrap(
+                        "wasm_disasm_len",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_trace_count = Module.cwrap(
+                        "wasm_get_trace_count",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_trace_pc = Module.cwrap(
+                        "wasm_get_trace_pc",
+                        "number",
+                        ["number"],
+                    );
+                    window._wasm_get_trace_ir = Module.cwrap(
+                        "wasm_get_trace_ir",
+                        "number",
+                        ["number"],
+                    );
+                    window._wasm_trace_clear = Module.cwrap(
+                        "wasm_trace_clear",
+                        null,
+                        [],
+                    );
+                    /* MMU */
+                    window._wasm_get_mmu_sr0 = Module.cwrap(
+                        "wasm_get_mmu_sr0",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_mmu_sr2 = Module.cwrap(
+                        "wasm_get_mmu_sr2",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_mmu_par = Module.cwrap(
+                        "wasm_get_mmu_par",
+                        "number",
+                        ["number"],
+                    );
+                    window._wasm_get_mmu_pdr = Module.cwrap(
+                        "wasm_get_mmu_pdr",
+                        "number",
+                        ["number"],
+                    );
+                    /* Breakpoints */
+                    window._wasm_bp_set = Module.cwrap(
+                        "wasm_bp_set",
+                        "number",
+                        ["number"],
+                    );
+                    window._wasm_bp_del = Module.cwrap(
+                        "wasm_bp_del",
+                        "number",
+                        ["number"],
+                    );
+                    window._wasm_bp_clear = Module.cwrap(
+                        "wasm_bp_clear",
+                        null,
+                        [],
+                    );
+                    window._wasm_bp_count = Module.cwrap(
+                        "wasm_bp_count",
+                        "number",
+                        [],
+                    );
+                    window._wasm_bp_addr = Module.cwrap(
+                        "wasm_bp_addr",
+                        "number",
+                        ["number"],
+                    );
+                    /* Micro-state */
+                    window._wasm_get_mpc = Module.cwrap(
+                        "wasm_get_mpc",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_mpc_label = Module.cwrap(
+                        "wasm_get_mpc_label",
+                        "string",
+                        ["number"],
+                    );
+                    window._wasm_get_mpc_desc = Module.cwrap(
+                        "wasm_get_mpc_desc",
+                        "string",
+                        ["number"],
+                    );
+                    window._wasm_get_ba = Module.cwrap(
+                        "wasm_get_ba",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_b_reg = Module.cwrap(
+                        "wasm_get_b_reg",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_bx_reg = Module.cwrap(
+                        "wasm_get_bx_reg",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_alu_out = Module.cwrap(
+                        "wasm_get_alu_out",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_alu_cout = Module.cwrap(
+                        "wasm_get_alu_cout",
+                        "number",
+                        [],
+                    );
+                    window._wasm_get_udata = Module.cwrap(
+                        "wasm_get_udata",
+                        "number",
+                        [],
+                    );
+                    /* Probe */
+                    window._wasm_probe_sig_count = Module.cwrap(
+                        "wasm_probe_sig_count",
+                        "number",
+                        [],
+                    );
+                    window._wasm_probe_sig_name = Module.cwrap(
+                        "wasm_probe_sig_name",
+                        "string",
+                        ["number"],
+                    );
+                    window._wasm_probe_sig_desc = Module.cwrap(
+                        "wasm_probe_sig_desc",
+                        "string",
+                        ["number"],
+                    );
+                    window._wasm_probe_add = Module.cwrap(
+                        "wasm_probe_add",
+                        "number",
+                        ["string"],
+                    );
+                    window._wasm_probe_rm = Module.cwrap(
+                        "wasm_probe_rm",
+                        "number",
+                        ["string"],
+                    );
+                    window._wasm_probe_clear_sigs = Module.cwrap(
+                        "wasm_probe_clear_sigs",
+                        null,
+                        [],
+                    );
+                    window._wasm_probe_sel_count = Module.cwrap(
+                        "wasm_probe_sel_count",
+                        "number",
+                        [],
+                    );
+                    window._wasm_probe_sel_name = Module.cwrap(
+                        "wasm_probe_sel_name",
+                        "string",
+                        ["number"],
+                    );
+                    window._wasm_probe_sel_is_1bit = Module.cwrap(
+                        "wasm_probe_sel_is_1bit",
+                        "number",
+                        ["number"],
+                    );
+                    window._wasm_probe_chip_name = Module.cwrap(
+                        "wasm_probe_chip_name",
+                        "string",
+                        ["string"],
+                    );
+                    window._wasm_probe_sig_group = Module.cwrap(
+                        "wasm_probe_sig_group",
+                        "string",
+                        ["number"],
+                    );
+                    window._wasm_probe_sig_alias = Module.cwrap(
+                        "wasm_probe_sig_alias",
+                        "string",
+                        ["number"],
+                    );
+                    window._wasm_probe_sig_is_1bit = Module.cwrap(
+                        "wasm_probe_sig_is_1bit",
+                        "number",
+                        ["number"],
+                    );
+                    window._wasm_probe_clear_trigger = Module.cwrap(
+                        "wasm_probe_clear_trigger",
+                        null,
+                        [],
+                    );
+                    window._wasm_probe_set_trigger_edge = Module.cwrap(
+                        "wasm_probe_set_trigger_edge",
+                        null,
+                        ["number"],
+                    );
+                    window._wasm_probe_trigger_index = Module.cwrap(
+                        "wasm_probe_trigger_index",
+                        "number",
+                        [],
+                    );
+                    window._wasm_probe_set_trigger = Module.cwrap(
+                        "wasm_probe_set_trigger",
+                        "number",
+                        ["string", "number", "number"],
+                    );
+                    window._wasm_probe_set_depth = Module.cwrap(
+                        "wasm_probe_set_depth",
+                        null,
+                        ["number"],
+                    );
+                    window._wasm_probe_set_rate = Module.cwrap(
+                        "wasm_probe_set_rate",
+                        null,
+                        ["number"],
+                    );
+                    window._wasm_probe_set_pos = Module.cwrap(
+                        "wasm_probe_set_pos",
+                        null,
+                        ["number"],
+                    );
+                    window._wasm_probe_arm = Module.cwrap(
+                        "wasm_probe_arm",
+                        null,
+                        [],
+                    );
+                    window._wasm_probe_disarm = Module.cwrap(
+                        "wasm_probe_disarm",
+                        null,
+                        [],
+                    );
+                    window._wasm_probe_state = Module.cwrap(
+                        "wasm_probe_state",
+                        "number",
+                        [],
+                    );
+                    window._wasm_probe_sample_count = Module.cwrap(
+                        "wasm_probe_sample_count",
+                        "number",
+                        [],
+                    );
+                    window._wasm_probe_read = Module.cwrap(
+                        "wasm_probe_read",
+                        "number",
+                        ["number", "number"],
+                    );
+                    window._wasm_probe_read_ns = Module.cwrap(
+                        "wasm_probe_read_ns",
+                        "number",
+                        ["number"],
+                    );
+                    window._wasm_probe_dbg_head = Module.cwrap(
+                        "wasm_probe_dbg_head",
+                        "number",
+                        [],
+                    );
+                    window._wasm_probe_dbg_ptr = Module.cwrap(
+                        "wasm_probe_dbg_ptr",
+                        "number",
+                        [],
+                    );
+                    window._wasm_probe_dbg_depth = Module.cwrap(
+                        "wasm_probe_dbg_depth",
+                        "number",
+                        [],
+                    );
+                    window._wasm_probe_dbg_div = Module.cwrap(
+                        "wasm_probe_dbg_div",
+                        "number",
+                        [],
+                    );
+
+                    /* Hide loading overlay, build panel, init audio */
+                    document.getElementById("loading").style.display = "none";
+                    /* Force sound checkbox to match initial soundEnabled state */
+                    document.getElementById("sound-chk").checked = soundEnabled;
+                    buildPanel();
+                    fitAddon.fit();
+                    initAudio();
+
+                    /* Keyboard to DL11 RX */
+                    term.onData((data) => {
+                        for (let i = 0; i < data.length; i++) {
+                            let ch = data.charCodeAt(i);
+                            if (ch === 10) ch = 13;
+                            window._wasm_rx_push(ch);
+                        }
+                    });
+
+                    /* Wire panel buttons */
+                    document
+                        .getElementById("panel-overlay")
+                        .addEventListener("pointerdown", (e) => {
+                            const btn = e.target.closest(".panel-btn");
+                            if (btn) {
+                                playClick();
+                                btn.classList.add("pressed");
+                                setTimeout(
+                                    () => btn.classList.remove("pressed"),
+                                    150,
+                                );
+                                const key = parseInt(btn.dataset.key);
+                                if (
+                                    key >= 0 &&
+                                    powered &&
+                                    window._wasm_console_key
+                                ) {
+                                    window._wasm_console_key(key);
+                                }
+                            }
+                        });
+
+                    /* Demo selector */
+                    document
+                        .getElementById("demo-select")
+                        .addEventListener("change", function () {
+                            const idx = parseInt(this.value);
+                            loadDemo(idx);
+                        });
+
+                    /* Sound checkbox */
+                    document
+                        .getElementById("sound-chk")
+                        .addEventListener("change", function () {
+                            setSoundEnabled(this.checked);
+                        });
+
+                    /* Debug GUI tab */
+                    document
+                        .getElementById("dbg-pause-btn")
+                        .addEventListener("click", () => {
+                            if (!powered) return;
+                            window._wasm_halt();
+                            dbgFollowPC();
+                            dbgLog("--- CPU paused ---");
+                            dbgRefreshAll();
+                        });
+                    document
+                        .getElementById("dbg-resume-btn")
+                        .addEventListener("click", () => {
+                            if (!powered) return;
+                            window._wasm_run();
+                            dbgFollowPC();
+                            dbgUpdateStatus();
+                            dbgLog("Running.");
+                        });
+                    document
+                        .getElementById("dbg-step-btn")
+                        .addEventListener("click", () => {
+                            if (!powered) return;
+                            dbgFollowPC();
+                            window._wasm_step();
+                            setTimeout(() => dbgRefreshAll(), 50);
+                        });
+                    document
+                        .getElementById("dbg-bp-add-btn")
+                        .addEventListener("click", () => {
+                            const inp = document.getElementById("dbg-bp-input");
+                            const addr = parseOct(inp.value);
+                            if (addr === null) return;
+                            window._wasm_bp_set(addr & 0xffff);
+                            inp.value = "";
+                            dbgRefreshBpList();
+                            dbgRefreshDisasm();
+                        });
+                    document
+                        .getElementById("dbg-bp-input")
+                        .addEventListener("keydown", (e) => {
+                            if (e.key === "Enter")
+                                document
+                                    .getElementById("dbg-bp-add-btn")
+                                    .click();
+                        });
+                    document
+                        .getElementById("dbg-bp-list")
+                        .addEventListener("click", (e) => {
+                            const del = e.target.closest(".bp-del");
+                            if (del) {
+                                window._wasm_bp_del(parseInt(del.dataset.addr));
+                                dbgRefreshBpList();
+                                dbgRefreshDisasm();
+                                return;
+                            }
+                            const chip = e.target.closest(".dbg-bp-chip");
+                            if (!chip) return;
+                            dbgSelAddr = parseInt(chip.dataset.addr);
+                            dbgDisasmBase = (dbgSelAddr - 20) & 0xffff;
+                            dbgRefreshDisasm();
+                        });
+                    /* Memory pane: address, follow, wheel, resize, collapse */
+                    (function () {
+                        const box = document.querySelector(".dbg-codemem");
+                        const pane = document.getElementById("dbg-mempane");
+                        const el = document.getElementById("dbg-mem");
+                        const splitter = document.getElementById("mem-splitter");
+                        const follow = document.getElementById("mem-follow");
+                        const setWidth = (w) => {
+                            w = Math.max(260, Math.min(w, box.clientWidth - 300 || w));
+                            pane.style.width = w + "px";
+                            return w;
+                        };
+                        let width = parseInt(localStorage.getItem("ll34.memWidth")) || 680;
+                        pane.style.width = width + "px";
+                        if (localStorage.getItem("ll34.memHidden") === "1")
+                            box.classList.add("mem-collapsed");
+                        document.getElementById("mem-toggle").addEventListener("click", () => {
+                            box.classList.toggle("mem-collapsed");
+                            localStorage.setItem(
+                                "ll34.memHidden",
+                                box.classList.contains("mem-collapsed") ? "1" : "0",
+                            );
+                            dbgRefreshMemPane();
+                        });
+                        const go = () => {
+                            const v = parseOct(document.getElementById("mem-addr").value);
+                            if (v === null) return;
+                            follow.value = "";
+                            memBase = v & 0x3ffff;
+                            dbgRefreshMemPane();
+                        };
+                        document.getElementById("mem-go-btn").addEventListener("click", go);
+                        document.getElementById("mem-addr").addEventListener("keydown", (e) => {
+                            if (e.key === "Enter") go();
+                        });
+                        follow.addEventListener("change", dbgRefreshMemPane);
+                        el.addEventListener(
+                            "wheel",
+                            (e) => {
+                                e.preventDefault();
+                                follow.value = "";
+                                const step = (e.deltaY > 0 ? 3 : -3) * memRowBytes;
+                                memBase = Math.max(0, Math.min(memBase + step, 0x3fff0));
+                                dbgRefreshMemPane();
+                            },
+                            { passive: false },
+                        );
+                        splitter.addEventListener("pointerdown", (e) => {
+                            splitter.setPointerCapture(e.pointerId);
+                            splitter.classList.add("dragging");
+                        });
+                        splitter.addEventListener("pointermove", (e) => {
+                            if (!splitter.classList.contains("dragging")) return;
+                            width = setWidth(box.getBoundingClientRect().right - e.clientX);
+                            dbgRefreshMemPane();
+                        });
+                        splitter.addEventListener("pointerup", (e) => {
+                            splitter.releasePointerCapture(e.pointerId);
+                            splitter.classList.remove("dragging");
+                            localStorage.setItem("ll34.memWidth", String(width));
+                        });
+                        window.addEventListener("resize", dbgRefreshMemPane);
+                    })();
+                    /* Listing: wheel scrolls (leaves PC follow), find */
+                    document.getElementById("dbg-disasm").addEventListener(
+                        "wheel",
+                        (e) => {
+                            if (!powered || !dbgRows.length) return;
+                            e.preventDefault();
+                            dbgDisasmBase =
+                                e.deltaY > 0
+                                    ? dbgRows[Math.min(3, dbgRows.length - 1)]
+                                    : Math.max(0, dbgRows[0] - 6);
+                            dbgRefreshDisasm();
+                        },
+                        { passive: false },
+                    );
+                    document.getElementById("dbg-find").addEventListener("keydown", (e) => {
+                        if (e.key === "Enter") dbgFind(true);
+                    });
+                    document.getElementById("dbg-find").addEventListener("input", () => dbgFind(false));
+                    document.getElementById("mem-find").addEventListener("keydown", (e) => {
+                        if (e.key === "Enter") memFind(true);
+                    });
+                    document.getElementById("mem-find").addEventListener("input", () => {
+                        memHit = null;
+                        memFind(false);
+                    });
+                    window.addEventListener("resize", () => {
+                        if (activeTab === "debug" && powered) dbgRefreshDisasm();
+                    });
+                    /* Listing: gutter toggles a breakpoint, row selects */
+                    document
+                        .getElementById("dbg-disasm")
+                        .addEventListener("click", (e) => {
+                            const row = e.target.closest(".dis-row");
+                            if (!row) return;
+                            const addr = parseInt(row.dataset.addr);
+                            if (e.target.closest(".dis-gutter")) {
+                                dbgToggleBp(addr);
+                                return;
+                            }
+                            dbgSelAddr = addr;
+                            dbgRefreshDisasm();
+                        });
+                    /* Debugger keys, active on the Debug tab outside inputs */
+                    document.addEventListener("keydown", (e) => {
+                        if (activeTab !== "debug" || !powered) return;
+                        if (e.target.closest("input, textarea, select")) return;
+                        const halted = window._wasm_is_halted();
+                        switch (e.key) {
+                            case "F5":
+                                if (halted) document.getElementById("dbg-resume-btn").click();
+                                break;
+                            case "F6":
+                                if (!halted) document.getElementById("dbg-pause-btn").click();
+                                break;
+                            case "F7":
+                                if (halted) document.getElementById("dbg-ustep-btn").click();
+                                break;
+                            case "F9":
+                                dbgToggleBp(
+                                    dbgSelAddr !== null
+                                        ? dbgSelAddr
+                                        : window._wasm_get_reg(7),
+                                );
+                                break;
+                            case "F8":
+                                if (halted) document.getElementById("dbg-step-btn").click();
+                                break;
+                            default:
+                                return;
+                        }
+                        e.preventDefault();
+                    });
+                    document
+                        .getElementById("dbg-ustep-btn")
+                        .addEventListener("click", () => {
+                            if (!powered) return;
+                            dbgFollowPC();
+                            window._wasm_ustep_n(1);
+                            setTimeout(() => dbgRefreshAll(), 50);
+                        });
+                    /* Disasm base address controls */
+                    document
+                        .getElementById("dbg-disasm-pc-btn")
+                        .addEventListener("click", () => {
+                            dbgDisasmBase = null;
+                            document.getElementById("dbg-disasm-base").value =
+                                "";
+                            dbgRefreshDisasm();
+                        });
+                    document
+                        .getElementById("dbg-disasm-go-btn")
+                        .addEventListener("click", () => {
+                            const v = parseOct(
+                                document.getElementById("dbg-disasm-base")
+                                    .value,
+                            );
+                            if (v !== null) {
+                                dbgDisasmBase = v;
+                                dbgRefreshDisasm();
+                            }
+                        });
+                    document
+                        .getElementById("dbg-disasm-base")
+                        .addEventListener("keydown", (e) => {
+                            if (e.key === "Enter")
+                                document
+                                    .getElementById("dbg-disasm-go-btn")
+                                    .click();
+                        });
+
+                    /* Logic Analyzer */
+                    laInitWave();
+
+                    /* Power zone click */
+                    document
+                        .getElementById("power-zone")
+                        .addEventListener("click", async () => {
+                            ensureAudioCtx();
+                            if (audioCtx.state === "suspended") {
+                                try {
+                                    await audioCtx.resume();
+                                } catch (_) {}
+                            }
+                            startKeepAlive();
+                            if (!powered) doPowerOn();
+                            else doPowerOff();
+                        });
+
+                    /* Main render loop */
+                    let laStatusSkip = 0;
+                    function renderLoop() {
+                        /* Drain TX buffer into xterm */
+                        let s = "";
+                        let ch;
+                        while ((ch = window._wasm_tx_poll()) >= 0)
+                            s += String.fromCharCode(ch);
+                        if (s) {
+                            if (window._dbgTxLog)
+                                console.log(
+                                    "TX:",
+                                    [...s]
+                                        .map((c) =>
+                                            c
+                                                .charCodeAt(0)
+                                                .toString(16)
+                                                .padStart(2, "0"),
+                                        )
+                                        .join(" "),
+                                );
+                            term.write(vt52Mode ? vt52translate(s) : s);
+                        }
+
+                        /* Update LEDs and display */
+                        pollPanel();
+
+                        /* Detect any CPU halt (1=debugger, 2=spontaneous HALT/crash) */
+                        if (powered && window._wasm_poll_halt) {
+                            const haltReason = window._wasm_poll_halt();
+                            if (haltReason) consoleHaltDump(haltReason);
+                        }
+
+                        /* Debugger: follow power changes, refresh at ~2 Hz while running */
+                        if (activeTab === "debug") {
+                            if (powered !== dbgLastPowered) {
+                                dbgLastPowered = powered;
+                                dbgUpdatePower();
+                            } else if (
+                                powered &&
+                                window._wasm_is_halted &&
+                                !window._wasm_is_halted() &&
+                                ++dbgRunRefreshSkip >= 30
+                            ) {
+                                /* Panels keep the last stop; only status and time move */
+                                dbgRunRefreshSkip = 0;
+                                dbgUpdateStatus();
+                            }
+                        }
+
+                        /* Poll LA status every frame during capture, otherwise at ~4 Hz */
+                        if (activeTab === "la" && powered) {
+                            const laActive =
+                                laPrevState === 1 || laPrevState === 2;
+                            if (laActive || ++laStatusSkip >= 15) {
+                                laStatusSkip = 0;
+                                laUpdateStatus();
+                            }
+                        }
+
+                        requestAnimationFrame(renderLoop);
+                    }
+                    requestAnimationFrame(renderLoop);
+
+                    term.focus();
+                },
+            };
+        </script>
+
+        <!-- Emscripten glue and WASM, loaded after Module is defined -->
+        <script>
+            document.write('<script src="ll-34.js?v=' + LL34_BUILD + '"><\/script>');
+        </script>
+    </body>
+</html>

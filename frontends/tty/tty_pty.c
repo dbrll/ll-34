@@ -1,7 +1,7 @@
 #define _XOPEN_SOURCE 600
 #define _DEFAULT_SOURCE
 /*
- * tty/tty_pty.c -- Pseudo-terminal TTY backend for ll-34
+ * frontends/tty/tty_pty.c -- Pseudo-terminal TTY backend for ll-34
  *
  * Slave side appears as a tty device: screen /dev/ttysNNN
  */

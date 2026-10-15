@@ -20,47 +20,42 @@
 #include <termios.h>
 #include <libgen.h>
 #include <sys/select.h>
-#include "unibus/unibus.h"
-#include "unibus/ram.h"
-#include "tty/tty.h"
-#include "m9301/rom.h"
-#include "dl11/dl11.h"
-#include "rk11/rk11.h"
-#include "rl11/rl11.h"
-#include "kd11ea/kd11ea.h"
-#include "kd11ea/ucode_labels.h"
-#include "kd11ea/clock.h"
-#include "kw11/kw11.h"
-#include "pc11/pc11.h"
-#include "console/console.h"
-#include "probe/probe.h"
-#include "debug/disasm.h"
-#include "debug/memdump.h"
-#include "unibus/loader.h"
-#include "trace.h"
+#include "pdp11/unibus/unibus.h"
+#include "pdp11/unibus/ram.h"
+#include "frontends/tty/tty.h"
+#include "pdp11/m9301/rom.h"
+#include "pdp11/machine.h"
+#include "pdp11/dl11/dl11.h"
+#include "pdp11/rk11/rk11.h"
+#include "pdp11/rl11/rl11.h"
+#include "pdp11/kd11ea/kd11ea.h"
+#include "pdp11/kd11ea/ucode_labels.h"
+#include "pdp11/kd11ea/clock.h"
+#include "pdp11/kw11/kw11.h"
+#include "pdp11/pc11/pc11.h"
+#include "pdp11/ky11/console.h"
+#include "pdp11/probe/probe.h"
+#include "pdp11/debug/disasm.h"
+#include "pdp11/debug/memdump.h"
+#include "pdp11/unibus/loader.h"
+#include "pdp11/trace.h"
 
 /* PSW at 177776, accessible as a UNIBUS register */
-#define PSW_ADDR  0x3FFFE  /* 777776 octal (18-bit) */
-#define SWREG_ADDR 0x3FF78  /* 777570 octal (18-bit) */
 
-static KD11EA cpu;
-static Console con;
+static Machine m;
 static TTY *tty;
-static Bus *g_bus;   /* set in main(), used by debug_cli() */
-static Ram *g_ram;   /* set in main(), used by debug_cli() */
 static volatile sig_atomic_t got_sigterm;
 static int console_shown_help;     /* show help banner on first halt */
 
 /* --- Breakpoints --- */
-#define MAX_BREAKPOINTS 16
-static struct { uint16_t addr; int active; } breakpoints[MAX_BREAKPOINTS];
-static int num_breakpoints;
 static void sigterm_handler(int sig) { (void)sig; got_sigterm = 1; }
 
 /* Operator keys (intercepted before reaching the OS) */
 #define CONSOLE_HALT_CHAR 0x10  /* Ctrl-P - programmer console (halt) */
 #define DEBUG_CHAR        0x05  /* Ctrl-E - debug console */
 #define PROBE_CHAR        0x0C  /* Ctrl-L - logic analyzer */
+
+#define CLI_SLICE_NS      1000000  /* run slice between host checks (1 ms) */
 static int halt_requested;
 static int debug_requested;
 static int probe_requested;
@@ -163,7 +158,7 @@ static int map_console_key(int ch) {
 }
 
 static void console_prompt(void) {
-    fprintf(stderr, "\r%06o %06o > ", console_addr_ptr(&con), con.display);
+    fprintf(stderr, "\r%06o %06o > ", console_addr_ptr(&m.con), m.con.display);
 }
 
 static void console_help(void) {
@@ -180,13 +175,13 @@ static void console_help(void) {
 
 static void enter_console_mode(const char *reason) {
     fprintf(stderr, "\r\nll-34: %s at PC=%06o PSW=%06o\r\n",
-            reason, PC(&cpu), cpu.psw);
+            reason, PC(&m.cpu), m.cpu.psw);
     if (!console_shown_help) {
         console_shown_help = 1;
         fprintf(stderr, "Programmer console (? for help)\r\n");
     }
-    console_set_addr(&con, PC(&cpu));
-    console_key(&con, KEY_EXAM);
+    console_set_addr(&m.con, PC(&m.cpu));
+    console_key(&m.con, KEY_EXAM);
     console_prompt();
 }
 
@@ -236,103 +231,33 @@ static int console_poll(void) {
     /* Auto-prefix CNTRL (no physical modifier in CLI) */
     if (key == KEY_CONT || key == KEY_START ||
         key == KEY_BOOT || key == KEY_INIT) {
-        console_key(&con, KEY_CNTRL);
+        console_key(&m.con, KEY_CNTRL);
     }
     /* HLT/SS: CNTRL only when running (halted = single-step) */
-    if (key == KEY_HALT_SS && !cpu.halted) {
-        console_key(&con, KEY_CNTRL);
+    if (key == KEY_HALT_SS && !m.cpu.halted) {
+        console_key(&m.con, KEY_CNTRL);
     }
 
-    console_key(&con, key);
+    console_key(&m.con, key);
 
     /* Auto-EXAM after address-changing actions */
-    if (key == KEY_HALT_SS && cpu.halted) {
-        console_set_addr(&con, PC(&cpu));
-        console_key(&con, KEY_EXAM);
-    } else if (key == KEY_LAD && cpu.halted) {
-        console_key(&con, KEY_EXAM);
-    } else if (key == KEY_DEP && cpu.halted) {
-        console_key(&con, KEY_EXAM);
+    if (key == KEY_HALT_SS && m.cpu.halted) {
+        console_set_addr(&m.con, PC(&m.cpu));
+        console_key(&m.con, KEY_EXAM);
+    } else if (key == KEY_LAD && m.cpu.halted) {
+        console_key(&m.con, KEY_EXAM);
+    } else if (key == KEY_DEP && m.cpu.halted) {
+        console_key(&m.con, KEY_EXAM);
     }
 
     console_prompt();
     return 0;
 }
 
-/* BUS INIT: reset device registers (BINIT L) */
-static void do_bus_reset(DL11 *dl, RK05 *rk, KW11 *kw, Bus *bus) {
-    dl->rcsr = 0;
-    dl->rbuf = 0;
-    dl->xcsr = DL11_XCSR_RDY;
-    dl->tx_done_at_ns = 0;
-
-    /* RK05: clear errors, controller done, preserve disk state */
-    rk->rker = 0;
-    rk->rkcs = RKCS_DONE;
-    rk->rkwc = 0;
-    rk->rkba = 0;
-    rk->rkda = 0;
-
-    /* KW11-L: clear status */
-    kw->lks = 0;
-
-    /* Bus: clear NXM */
-    bus->nxm = 0;
-
-    int_init(&cpu.intc);
-}
-
-static int psw_read(void *dev, uint32_t addr, uint16_t *data) {
-    (void)dev; (void)addr;
-    *data = cpu.psw;
-    return 0;
-}
-
-static int psw_write(void *dev, uint32_t addr, uint16_t data, int is_byte) {
-    (void)dev; (void)addr;
-    if (is_byte) {
-        /* DATOB: low byte only */
-        cpu.psw = (cpu.psw & 0xFF00) | (data & 0xFF);
-    } else {
-        cpu.psw = data;
-    }
-    return 0;
-}
-
-static int swreg_read(void *dev, uint32_t addr, uint16_t *data) {
-    (void)dev; (void)addr;
-    *data = con.switch_reg;
-    return 0;
-}
-
-static int swreg_write(void *dev, uint32_t addr, uint16_t data, int is_byte) {
-    (void)dev; (void)addr; (void)is_byte;
-    con.switch_reg = data;
-    return 0;
-}
-
-static void cpu_irq_set(void *ctx, uint16_t vector, uint8_t priority) {
-    (void)ctx;
-    int_request(&cpu.intc, vector, priority);
-}
-
-static void cpu_irq_clr(void *ctx, uint16_t vector) {
-    (void)ctx;
-    int_cancel(&cpu.intc, vector);
-}
-
-/* Power-on bootstrap: microcode copies PC to R5, then loads vector */
-static void power_on(KD11EA *cpu, Bus *bus) {
-    uint16_t pc, ps;
-    REG(cpu, 5) = 0;  /* flow 26-N: PC cleared before copy to R5 */
-
-    bus_read(bus, 0x3F614, &pc);   /* 773024: prototype PC (OR'd with S1, 18-bit) */
-    bus_read(bus, 0x3F616, &ps);   /* 773026: prototype PS (18-bit) */
-    PC(cpu) = pc;
-    cpu->psw = ps;
-    cpu->mpc = 0;
-    cpu->halted = 0;
-    fprintf(stderr, "ll-34: power-on vector PC=%06o PS=%06o\n", pc, ps);
+static void power_on(void) {
+    machine_power_on(&m);
+    fprintf(stderr, "ll-34: power-on vector PC=%06o PS=%06o\n",
+            PC(&m.cpu), m.cpu.psw);
 }
 
 /* Logic analyzer CLI (backend in probe/probe.c) */
@@ -792,9 +717,9 @@ static void probe_cmd_show(Probe *p, int show_lines, int ntok, char **tok) {
 static int debug_read_word(uint16_t vba, void *ctx) {
     (void)ctx;
     uint32_t pba;
-    if (cpu.mmu.sr0 & SR0_ENABLE) {
-        int mode = (cpu.psw >> 14) & 3;
-        if (mmu_translate(&cpu.mmu, vba, mode, 0, PC(&cpu), &pba) < 0) {
+    if (m.cpu.mmu.sr0 & SR0_ENABLE) {
+        int mode = (m.cpu.psw >> 14) & 3;
+        if (mmu_translate(&m.cpu.mmu, vba, mode, 0, PC(&m.cpu), &pba) < 0) {
             /* MMU abort - direct mapping fallback */
             pba = vba;
             if ((vba & 0xE000) == 0xE000)
@@ -806,18 +731,18 @@ static int debug_read_word(uint16_t vba, void *ctx) {
             pba = 0x30000 | vba;
     }
     uint16_t data;
-    if (bus_read(g_bus, pba, &data) < 0)
+    if (bus_read(&m.bus, pba, &data) < 0)
         return -1;
     return data;
 }
 
 static void debug_show_mmu(void) {
-    MMU *m = &cpu.mmu;
-    int enabled = (m->sr0 & SR0_ENABLE) != 0;
-    int mode = (cpu.psw >> 14) & 3;
+    MMU *mmu = &m.cpu.mmu;
+    int enabled = (mmu->sr0 & SR0_ENABLE) != 0;
+    int mode = (m.cpu.psw >> 14) & 3;
 
     fprintf(stderr, "  SR0=%06o  SR2=%06o  %s  mode=%s\r\n",
-            m->sr0, m->sr2,
+            mmu->sr0, mmu->sr2,
             enabled ? "ENABLED" : "disabled",
             mode == 0 ? "kernel" : mode == 3 ? "user" : "???");
 
@@ -833,8 +758,8 @@ static void debug_show_mmu(void) {
                 ((mi == 0 && mode == 0) || (mi == 1 && mode == 3)) ? " (current)" : "");
         fprintf(stderr, "  Page  PAR    PDR    ACF  ED  PLF   W   VBA range     PBA base\r\n");
         for (int p = 0; p < 8; p++) {
-            uint16_t par = m->par[base + p];
-            uint16_t pdr = m->pdr[base + p];
+            uint16_t par = mmu->par[base + p];
+            uint16_t pdr = mmu->pdr[base + p];
             int acf = (pdr >> 1) & 3;
             int ed  = (pdr >> 3) & 1;
             int plf = (pdr >> 8) & 0x7F;
@@ -870,7 +795,7 @@ static void debug_cli(void) {
             return;
         }
         else if (strcmp(tok[0], "g") == 0 || strcmp(tok[0], "go") == 0) {
-            cpu.halted = 0;
+            m.cpu.halted = 0;
             return;
         }
         else if (strcmp(tok[0], "?") == 0 || strcmp(tok[0], "help") == 0) {
@@ -893,11 +818,11 @@ static void debug_cli(void) {
             if (count < 1) count = 1;
             if (count > 4096) count = 4096;
 
-            cpu.halted = 0;
+            m.cpu.halted = 0;
             for (int i = 0; i < count; i++) {
-                uint32_t ns = kd11ea_ustep(&cpu);
-                if (cpu.dbg.count > 0) {
-                    const DbgEntry *e = &cpu.dbg.ring[(cpu.dbg.head - 1) & (DBG_RING_SIZE - 1)];
+                uint32_t ns = kd11ea_ustep(&m.cpu);
+                if (m.cpu.dbg.count > 0) {
+                    const DbgEntry *e = &m.cpu.dbg.ring[(m.cpu.dbg.head - 1) & (DBG_RING_SIZE - 1)];
                     fprintf(stderr, "  MPC=%03o -> %03o  A=%06o B=%06o ALU=%06o",
                             e->mpc, e->next_mpc, e->a_leg, e->b_leg, e->alu_out);
                     if (e->bus_op == 1)
@@ -918,30 +843,27 @@ static void debug_cli(void) {
                         fprintf(stderr, " [DESC= %s]", lbl->desc);
                     fprintf(stderr, "\r\n");
                 }
-                if (cpu.halted || ns == 0) {
+                if (m.cpu.halted || ns == 0) {
                     fprintf(stderr, "  CPU halted\r\n");
                     break;
                 }
             }
-            cpu.halted = 1;
+            m.cpu.halted = 1;
         }
         else if (strcmp(tok[0], "b") == 0 && ntok >= 2) {
-            unsigned int addr;
+            unsigned int addr = 0;
             sscanf(tok[1], "%o", &addr);
-            if (num_breakpoints >= MAX_BREAKPOINTS) {
-                fprintf(stderr, "  max breakpoints reached (%d)\r\n", MAX_BREAKPOINTS);
-            } else {
-                breakpoints[num_breakpoints].addr = (uint16_t)addr;
-                breakpoints[num_breakpoints].active = 1;
-                fprintf(stderr, "  breakpoint #%d at %06o\r\n", num_breakpoints, addr & 0xFFFF);
-                num_breakpoints++;
-            }
+            int slot = machine_bp_set(&m, (uint16_t)addr);
+            if (slot < 0)
+                fprintf(stderr, "  max breakpoints reached (%d)\r\n", MACHINE_MAX_BP);
+            else
+                fprintf(stderr, "  breakpoint #%d at %06o\r\n", slot, addr & 0xFFFF);
         }
         else if (strcmp(tok[0], "bl") == 0) {
             int found = 0;
-            for (int i = 0; i < num_breakpoints; i++) {
-                if (breakpoints[i].active) {
-                    fprintf(stderr, "  #%d  %06o\r\n", i, breakpoints[i].addr);
+            for (int i = 0; i < MACHINE_MAX_BP; i++) {
+                if (m.bp_used[i]) {
+                    fprintf(stderr, "  #%d  %06o\r\n", i, m.bp_addr[i]);
                     found = 1;
                 }
             }
@@ -949,8 +871,7 @@ static void debug_cli(void) {
         }
         else if (strcmp(tok[0], "bd") == 0 && ntok >= 2) {
             int idx = atoi(tok[1]);
-            if (idx >= 0 && idx < num_breakpoints && breakpoints[idx].active) {
-                breakpoints[idx].active = 0;
+            if (machine_bp_del(&m, idx) == 0) {
                 fprintf(stderr, "  breakpoint #%d deleted\r\n", idx);
             } else {
                 fprintf(stderr, "  invalid breakpoint #%d\r\n", idx);
@@ -962,7 +883,7 @@ static void debug_cli(void) {
             if (ntok >= 2)
                 sscanf(tok[1], "%o", &addr);
             else
-                addr = PC(&cpu);
+                addr = PC(&m.cpu);
             if (ntok >= 3)
                 count = atoi(tok[2]);
             if (count < 1) count = 1;
@@ -1008,7 +929,7 @@ static void debug_cli(void) {
                 }
             }
             if (ntok < 2 || (ntok == 2 && outfile))
-                addr = PC(&cpu);
+                addr = PC(&m.cpu);
             if (count < 1) count = 1;
             if (count > 65536) count = 65536;
 
@@ -1030,16 +951,16 @@ static void debug_cli(void) {
                 "  R0=%06o  R1=%06o  R2=%06o  R3=%06o\r\n"
                 "  R4=%06o  R5=%06o  SP=%06o  PC=%06o\r\n"
                 "  PSW=%06o [%c%c%c%c%c pri=%d %s]\r\n",
-                REG(&cpu, 0), REG(&cpu, 1), REG(&cpu, 2), REG(&cpu, 3),
-                REG(&cpu, 4), REG(&cpu, 5), REG(&cpu, 6), PC(&cpu),
-                cpu.psw,
-                (cpu.psw & 0x10) ? 'T' : '-',
-                (cpu.psw & 0x08) ? 'N' : '-',
-                (cpu.psw & 0x04) ? 'Z' : '-',
-                (cpu.psw & 0x02) ? 'V' : '-',
-                (cpu.psw & 0x01) ? 'C' : '-',
-                (cpu.psw >> 5) & 7,
-                ((cpu.psw >> 14) & 3) == 0 ? "kernel" : "user");
+                REG(&m.cpu, 0), REG(&m.cpu, 1), REG(&m.cpu, 2), REG(&m.cpu, 3),
+                REG(&m.cpu, 4), REG(&m.cpu, 5), REG(&m.cpu, 6), PC(&m.cpu),
+                m.cpu.psw,
+                (m.cpu.psw & 0x10) ? 'T' : '-',
+                (m.cpu.psw & 0x08) ? 'N' : '-',
+                (m.cpu.psw & 0x04) ? 'Z' : '-',
+                (m.cpu.psw & 0x02) ? 'V' : '-',
+                (m.cpu.psw & 0x01) ? 'C' : '-',
+                (m.cpu.psw >> 5) & 7,
+                ((m.cpu.psw >> 14) & 3) == 0 ? "kernel" : "user");
         }
         else if (strcmp(tok[0], "mmu") == 0) {
             debug_show_mmu();
@@ -1048,11 +969,11 @@ static void debug_cli(void) {
             if (ntok < 2) {
                 fprintf(stderr, "  usage: save <filename>\r\n");
             } else {
-                if (mem_save(tok[1], g_ram->mem, g_ram->size_words) < 0)
+                if (mem_save(tok[1], m.ram.mem, m.ram.size_words) < 0)
                     fprintf(stderr, "  error writing %s\r\n", tok[1]);
                 else
                     fprintf(stderr, "  saved %u words (%uKB) to %s\r\n",
-                            g_ram->size_words, g_ram->size_words / 512, tok[1]);
+                            m.ram.size_words, m.ram.size_words / 512, tok[1]);
             }
         }
         else {
@@ -1188,7 +1109,7 @@ static void probe_cli(void) {
             } else {
                 probe_arm(&probe);
                 probe_notified = 0;
-                cpu.probe = &probe;
+                m.cpu.probe = &probe;
                 fprintf(stderr, "  armed (%u samples, trigger %s)\r\n",
                         probe.depth,
                         probe.trigger_signal >= 0 ? "set" : "free-run");
@@ -1197,7 +1118,7 @@ static void probe_cli(void) {
         }
         else if (strcmp(tok[0], "disarm") == 0) {
             probe_disarm(&probe);
-            cpu.probe = NULL;
+            m.cpu.probe = NULL;
             fprintf(stderr, "  disarmed\r\n");
         }
         else if (strcmp(tok[0], "status") == 0) {
@@ -1246,6 +1167,28 @@ static void probe_cli(void) {
             fprintf(stderr, "  unknown command: %s (? for help)\r\n", tok[0]);
         }
     }
+}
+
+/* Host I/O, called by machine_run() before each device tick */
+static int cli_host_tick(void *ctx) {
+    (void)ctx;
+    tty->tick(tty);
+    console_tick(&m.con);
+
+    /* Operator key poll (independent of DL11) */
+    if (!halt_requested && !debug_requested && !probe_requested
+        && stdin_pushback < 0 && stdin_rx_ready()) {
+        int ch = stdin_rx_read();
+        if (ch == CONSOLE_HALT_CHAR)
+            halt_requested = 1;
+        else if (ch == DEBUG_CHAR)
+            debug_requested = 1;
+        else if (ch == PROBE_CHAR)
+            probe_requested = 1;
+        else if (tty_uses_stdin)
+            stdin_pushback = ch;
+    }
+    return halt_requested || debug_requested || probe_requested;
 }
 
 static void usage(const char *prog) {
@@ -1321,29 +1264,13 @@ int main(int argc, char **argv) {
         }
     }
 
-    Bus bus;
-    Ram ram;
-    Rom rom;
-    DL11 dl;
-    RK05 rk;
-    RL11 rl;
-    KW11 kw;
-    PC11 pc;
-
-    bus_init(&bus);
-    g_bus = &bus;
-    ram_init(&ram, (uint32_t)mem_kb * 512);
-    g_ram = &ram;
-    fprintf(stderr, "ll-34: %uKB RAM (%u words)\n", mem_kb, ram.size_words);
-    rom_init(&rom);
-    dl11_init(&dl, 9600);
-    rk05_init(&rk);
-    rl11_init(&rl);
-    kw11_init(&kw, 60);
-    pc11_init(&pc);
+    MachineConfig cfg = { .mem_kb = mem_kb };
+    if (machine_init(&m, &cfg) < 0)
+        return 1;
+    fprintf(stderr, "ll-34: %uKB RAM (%u words)\n", mem_kb, m.ram.size_words);
 
     if (rom_file) {
-        int nwords = rom_load_mac(&rom, rom_file);
+        int nwords = rom_load_mac(&m.rom, rom_file);
         if (nwords < 0)
             return 1;
         fprintf(stderr, "ll-34: loaded %d words from %s\n", nwords, rom_file);
@@ -1352,7 +1279,7 @@ int main(int argc, char **argv) {
     static char rk_tmp_paths[RK_NUMDR][256];
     for (int d = 0; d < rk_ndisks; d++) {
         if (rk_raw_rw) {
-            if (rk05_attach(&rk, d, rk_files[d], 0) < 0)
+            if (rk05_attach(&m.rk, d, rk_files[d], 0) < 0)
                 return 1;
             fprintf(stderr, "ll-34: RK05 dk%d attached %s (WARNING: direct r/w)\n",
                     d, rk_files[d]);
@@ -1377,7 +1304,7 @@ int main(int argc, char **argv) {
                 fwrite(cpbuf, 1, n, dst);
             fclose(src);
             fclose(dst);
-            if (rk05_attach(&rk, d, rk_tmp_paths[d], 0) < 0)
+            if (rk05_attach(&m.rk, d, rk_tmp_paths[d], 0) < 0)
                 return 1;
             fprintf(stderr, "ll-34: RK05 dk%d snapshot %s\n",
                     d, rk_tmp_paths[d]);
@@ -1391,7 +1318,7 @@ int main(int argc, char **argv) {
     static char rl_tmp_paths[RL_NUMDR][256];
     for (int d = 0; d < rl_ndisks; d++) {
         if (rk_raw_rw) {
-            if (rl11_attach(&rl, d, rl_files[d], 0) < 0)
+            if (rl11_attach(&m.rl, d, rl_files[d], 0) < 0)
                 return 1;
             fprintf(stderr, "ll-34: RL dl%d attached %s (WARNING: direct r/w)\n",
                     d, rl_files[d]);
@@ -1416,7 +1343,7 @@ int main(int argc, char **argv) {
                 fwrite(cpbuf, 1, n, dst);
             fclose(src);
             fclose(dst);
-            if (rl11_attach(&rl, d, rl_tmp_paths[d], 0) < 0)
+            if (rl11_attach(&m.rl, d, rl_tmp_paths[d], 0) < 0)
                 return 1;
             fprintf(stderr, "ll-34: RL dl%d snapshot %s\n",
                     d, rl_tmp_paths[d]);
@@ -1424,72 +1351,28 @@ int main(int argc, char **argv) {
     }
 
     if (ptr_file) {
-        if (pc11_attach_reader(&pc, ptr_file) < 0)
+        if (pc11_attach_reader(&m.pc, ptr_file) < 0)
             return 1;
         fprintf(stderr, "ll-34: PC11 reader attached %s\n", ptr_file);
         if (s1_val == 0)
             s1_val = 0706;  /* M9301-YF: boot PR, skip diagnostics */
     }
     if (ptp_file) {
-        if (pc11_attach_punch(&pc, ptp_file) < 0)
+        if (pc11_attach_punch(&m.pc, ptp_file) < 0)
             return 1;
         fprintf(stderr, "ll-34: PC11 punch attached %s\n", ptp_file);
     }
 
-    rom_set_s1(&rom, s1_val);
-    con.switch_reg = s1_val;
-
-    ram_register(&ram, &bus);
-    rom_register(&rom, &bus);
-    dl11_register(&dl, &bus);
-    rk05_register(&rk, &bus);
-    rl11_register(&rl, &bus);
-    kw11_register(&kw, &bus);
-    pc11_register(&pc, &bus);
-    bus_register(&bus, PSW_ADDR, PSW_ADDR + 1,
-                 NULL, psw_read, psw_write, "PSW", 100);
-    bus_register(&bus, SWREG_ADDR, SWREG_ADDR + 1,
-                 NULL, swreg_read, swreg_write, "SWITCH", 100);
-
-    /* MMU registers */
-    mmu_init(&cpu.mmu);
-    bus_register(&bus, 0x3F480, 0x3F5FE,   /* Kernel+Super 772200-772776 */
-                 &cpu.mmu, mmu_read, mmu_write, "KS PAR/PDR", 100);
-    bus_register(&bus, 0x3FF7A, 0x3FF7E,   /* SR0-SR2 777572-777576 */
-                 &cpu.mmu, mmu_read, mmu_write, "MMU SR", 100);
-    bus_register(&bus, 0x3FF80, 0x3FFBE,   /* User 777600-777676 */
-                 &cpu.mmu, mmu_read, mmu_write, "U PAR/PDR", 100);
-
-    /* Make sure the host is fast enough to run ll-34:
-     * benchmark 1M usteps in ODT, then reset for normal boot
-     */
+    machine_set_s1(&m, s1_val);
+    /* Make sure the host is fast enough to run ll-34 */
     {
-        kd11ea_reset(&cpu);
-        cpu.bus = &bus;
-        rom_set_s1(&rom, 0);
-        power_on(&cpu, &bus);
-
-        struct timespec t0, t1;
-        clock_gettime(CLOCK_MONOTONIC, &t0);
-        for (long i = 0; i < 1000000L; i++)
-            kd11ea_ustep(&cpu);
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-
-        double elapsed = (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) * 1e-9;
-        double ns_per = elapsed / 1e6 * 1e9;
+        double ns_per = machine_benchmark(&m, s1_val);
         double ratio = (double)CYCLE_SHORT_NS / ns_per;
         if (ratio >= 1.0)
             fprintf(stderr, "ll-34: host can emulate %.1fx real KD11-EA: speed OK\n", ratio);
         else
             fprintf(stderr, "ll-34: WARNING: host too slow (%.1fx real KD11-EA speed)"
                     "cycle accuracy not guaranteed\n", ratio);
-
-        /* Reset CPU and peripherals for normal boot */
-        kd11ea_reset(&cpu);
-        cpu.bus = &bus;
-        rom_set_s1(&rom, s1_val);
-        dl11_init(&dl, 9600);
-        kw11_init(&kw, 60);
     }
 
     if (strcmp(tty_arg, "stdio") == 0) {
@@ -1511,41 +1394,21 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    dl.rx_ready  = dl11_tty_rx_ready;
-    dl.rx_read   = dl11_tty_rx_read;
-    dl.tx_write  = dl11_tty_tx_write;
-    dl.io_ctx    = tty;
-    dl.clock_ptr = &cpu.ns_elapsed;
-    dl.irq_set   = cpu_irq_set;
-    dl.irq_ctx   = &cpu;
-
-    rk.irq_set = cpu_irq_set;
-    rk.irq_clr = cpu_irq_clr;
-    rk.irq_ctx = &cpu;
-
-    rl.irq_set = cpu_irq_set;
-    rl.irq_clr = cpu_irq_clr;
-    rl.irq_ctx = &cpu;
-
-    kw.clock_ptr = &cpu.ns_elapsed;
-    kw.irq_set = cpu_irq_set;
-    kw.irq_ctx = &cpu;
-
-    pc.clock_ptr = &cpu.ns_elapsed;
-    pc.irq_set = cpu_irq_set;
-    pc.irq_clr = cpu_irq_clr;
-    pc.irq_ctx = &cpu;
+    m.dl.rx_ready = dl11_tty_rx_ready;
+    m.dl.rx_read  = dl11_tty_rx_read;
+    m.dl.tx_write = dl11_tty_tx_write;
+    m.dl.io_ctx   = tty;
 
     uint16_t load_start = 0;
     if (load_file) {
-        int nwords = loader_asc(&ram, load_file, &load_start);
+        int nwords = loader_asc(&m.ram, load_file, &load_start);
         if (nwords < 0)
             return 1;
         fprintf(stderr, "ll-34: loaded %d words from %s, start=%06o\n",
                 nwords, load_file, load_start);
     }
     if (lda_file) {
-        int nbytes = loader_lda(&ram, lda_file, &load_start);
+        int nbytes = loader_lda(&m.ram, lda_file, &load_start);
         if (nbytes < 0)
             return 1;
         fprintf(stderr, "ll-34: loaded %d bytes from %s, start=%06o\n",
@@ -1559,18 +1422,11 @@ int main(int argc, char **argv) {
     }
     probe_init(&probe, probe_buf, PROBE_DEFAULT_DEPTH);
 
-    kd11ea_reset(&cpu);
-    cpu.bus = &bus;
-
-    console_init(&con);
-    con.bus = &bus;
-    con.cpu = &cpu;
-
     if (load_file || lda_file) {
-        PC(&cpu) = load_start;
-        cpu.psw = 0;
-        cpu.mpc = 0;
-        cpu.halted = 0;
+        PC(&m.cpu) = load_start;
+        m.cpu.psw = 0;
+        m.cpu.mpc = 0;
+        m.cpu.halted = 0;
         fprintf(stderr, "ll-34: direct boot PC=%06o\n", load_start);
     } else if (rl_ndisks > 0 && rk_ndisks == 0 && !ptr_file) {
         /* RL11 bootstrap: M9301-YF has no RL boot, inject DEC bootstrap */
@@ -1616,14 +1472,14 @@ int main(int argc, char **argv) {
             0005007                         /* CLR PC */
         };
         for (size_t i = 0; i < sizeof(rl_boot_rom)/sizeof(rl_boot_rom[0]); i++)
-            ram.mem[(02000 >> 1) + i] = rl_boot_rom[i];
-        PC(&cpu) = 02002;  /* entry past "LD" magic */
-        cpu.psw = 0340;
-        cpu.mpc = 0;
-        cpu.halted = 0;
+            m.ram.mem[(02000 >> 1) + i] = rl_boot_rom[i];
+        PC(&m.cpu) = 02002;  /* entry past "LD" magic */
+        m.cpu.psw = 0340;
+        m.cpu.mpc = 0;
+        m.cpu.halted = 0;
         fprintf(stderr, "ll-34: RL bootstrap injected at 002000, boot PC=002002\n");
     } else {
-        power_on(&cpu, &bus);
+        power_on();
     }
 
     /* Non-stdio backends still need raw stdin for operator keys */
@@ -1637,134 +1493,95 @@ int main(int argc, char **argv) {
     signal(SIGTERM, sigterm_handler);
 
     Clock clk;
-    clock_init(&clk, cpu.ns_elapsed);
+    clock_init(&clk, m.cpu.ns_elapsed);
 
-    int poll_counter = 0;
+    m.host_tick = cli_host_tick;
+
     int quit_requested = 0;
     while (!got_sigterm && !quit_requested) {
-        if (!cpu.halted) {
-            uint32_t ns = kd11ea_ustep(&cpu);
-            if (cpu.halted) {
+        if (!m.cpu.halted) {
+            MachineStop stop = machine_run(&m, CLI_SLICE_NS);
+
+            if (stop == MACHINE_STOP_HALT || stop == MACHINE_STOP_STEP) {
                 enter_console_mode("CPU halted");
                 continue;
             }
-            if (ns == 0) {
-                enter_console_mode("CPU halted");
+
+            if (stop == MACHINE_STOP_BREAKPOINT) {
+                fprintf(stderr, "\r\nll-34: breakpoint #%d at PC=%06o\r\n",
+                        m.bp_hit, PC(&m.cpu));
+                debug_cli();
+                if (!m.cpu.halted)
+                    clock_init(&clk, m.cpu.ns_elapsed);
+                else
+                    enter_console_mode("debug console closed");
                 continue;
             }
 
-            /* Breakpoint check at MPC=0 (PC holds next instruction) */
-            if (cpu.mpc == 0 && num_breakpoints > 0) {
-                uint16_t pc = PC(&cpu);
-                for (int i = 0; i < num_breakpoints; i++) {
-                    if (breakpoints[i].active && breakpoints[i].addr == pc) {
-                        cpu.halted = 1;
-                        fprintf(stderr, "\r\nll-34: breakpoint #%d at PC=%06o\r\n", i, pc);
-                        debug_cli();
-                        if (!cpu.halted) {
-                            clock_init(&clk, cpu.ns_elapsed);
-                            poll_counter = 0;
-                        } else {
-                            enter_console_mode("debug console closed");
-                        }
-                        break;
-                    }
-                }
-                if (cpu.halted) continue;
+            if (halt_requested) {
+                halt_requested = 0;
+                m.cpu.halted = 1;
+                enter_console_mode("halted by operator");
             }
 
-            if (++poll_counter >= 256) {
-                poll_counter = 0;
-                tty->tick(tty);
-                dl11_tick(&dl, cpu.ns_elapsed);
-                kw11_tick(&kw, cpu.ns_elapsed);
-                pc11_tick(&pc, cpu.ns_elapsed);
-                console_tick(&con);
-
-                /* Operator key poll (independent of DL11) */
-                if (!halt_requested && !debug_requested && !probe_requested
-                    && stdin_pushback < 0 && stdin_rx_ready()) {
-                    int ch = stdin_rx_read();
-                    if (ch == CONSOLE_HALT_CHAR)
-                        halt_requested = 1;
-                    else if (ch == DEBUG_CHAR)
-                        debug_requested = 1;
-                    else if (ch == PROBE_CHAR)
-                        probe_requested = 1;
-                    else if (tty_uses_stdin)
-                        stdin_pushback = ch;
-                }
-
-                if (halt_requested) {
-                    halt_requested = 0;
-                    cpu.halted = 1;
-                    enter_console_mode("halted by operator");
-                }
-
-                if (debug_requested) {
-                    debug_requested = 0;
-                    cpu.halted = 1;
-                    fprintf(stderr, "\r\nll-34: halted at PC=%06o PSW=%06o\r\n",
-                            PC(&cpu), cpu.psw);
-                    debug_cli();
-                    if (!cpu.halted) {
-                        clock_init(&clk, cpu.ns_elapsed);
-                        poll_counter = 0;
-                    } else {
-                        enter_console_mode("debug console closed");
-                    }
-                }
-
-                if (probe_requested) {
-                    probe_requested = 0;
-                    cpu.halted = 1;
-                    fprintf(stderr, "\r\nll-34: halted at PC=%06o PSW=%06o\r\n",
-                            PC(&cpu), cpu.psw);
-                    probe_cli();
-                    enter_console_mode("logic analyzer closed");
-                }
-
-                if (probe.state == PROBE_DONE && !probe_notified) {
-                    probe_notified = 1;
-                    fprintf(stderr, "\r\nll-34: probe capture complete (%u samples)\r\n",
-                            probe.count < probe.depth ? probe.count : probe.depth);
-                }
+            if (debug_requested) {
+                debug_requested = 0;
+                m.cpu.halted = 1;
+                fprintf(stderr, "\r\nll-34: halted at PC=%06o PSW=%06o\r\n",
+                        PC(&m.cpu), m.cpu.psw);
+                debug_cli();
+                if (!m.cpu.halted)
+                    clock_init(&clk, m.cpu.ns_elapsed);
+                else
+                    enter_console_mode("debug console closed");
             }
 
-            clock_pace(&clk, cpu.ns_elapsed);
+            if (probe_requested) {
+                probe_requested = 0;
+                m.cpu.halted = 1;
+                fprintf(stderr, "\r\nll-34: halted at PC=%06o PSW=%06o\r\n",
+                        PC(&m.cpu), m.cpu.psw);
+                probe_cli();
+                enter_console_mode("logic analyzer closed");
+            }
+
+            if (probe.state == PROBE_DONE && !probe_notified) {
+                probe_notified = 1;
+                fprintf(stderr, "\r\nll-34: probe capture complete (%u samples)\r\n",
+                        probe.count < probe.depth ? probe.count : probe.depth);
+            }
+
+            clock_pace(&clk, m.cpu.ns_elapsed);
         } else {
-            console_tick(&con);
+            console_tick(&m.con);
             if (console_poll() < 0) {
                 quit_requested = 1;
                 break;
             }
 
-            if (con.boot_requested) {
-                con.boot_requested = 0;
+            if (m.con.boot_requested) {
+                m.con.boot_requested = 0;
                 fprintf(stderr, "\r\nll-34: BOOT\r\n");
-                do_bus_reset(&dl, &rk, &kw, &bus);
-                kd11ea_reset(&cpu);
-                cpu.bus = &bus;
-                power_on(&cpu, &bus);
-                clock_init(&clk, cpu.ns_elapsed);
-                poll_counter = 0;
+                machine_bus_init(&m);
+                machine_cpu_reset(&m);
+                power_on();
+                clock_init(&clk, m.cpu.ns_elapsed);
                 continue;
             }
 
-            if (con.init_requested) {
-                con.init_requested = 0;
-                do_bus_reset(&dl, &rk, &kw, &bus);
-                con.led_bus_err = 0;
+            if (m.con.init_requested) {
+                m.con.init_requested = 0;
+                machine_bus_init(&m);
+                m.con.led_bus_err = 0;
                 fprintf(stderr, "\r\nll-34: BUS INIT\r\n");
                 console_prompt();
             }
 
             usleep(10000);
 
-            if (!cpu.halted) {
+            if (!m.cpu.halted) {
                 fprintf(stderr, "\r\nll-34: running\r\n");
-                clock_init(&clk, cpu.ns_elapsed);
-                poll_counter = 0;
+                clock_init(&clk, m.cpu.ns_elapsed);
             }
         }
     }
@@ -1772,7 +1589,7 @@ int main(int argc, char **argv) {
     tty->destroy(tty);
     stdin_raw_leave();
     fprintf(stderr, "ll-34: exit at PC=%06o PSW=%06o\n",
-            PC(&cpu), cpu.psw);
+            PC(&m.cpu), m.cpu.psw);
 
     free(probe_buf);
     return 0;

@@ -1,5 +1,5 @@
 /*
- * tty/tty_stdio.c -- Stdio TTY backend for ll-34
+ * frontends/tty/tty_stdio.c -- Stdio TTY backend for ll-34
  *
  * Raw mode terminal, restores settings on exit.
  */

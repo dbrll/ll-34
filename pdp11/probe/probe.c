@@ -2,7 +2,7 @@
  * probe.c: Virtual logic analyzer backend
  *
  * Signal table, ring buffer capture with trigger, and value readout.
- * All output formatting is done by the CLI in main.c.
+ * All output formatting is done by the front ends.
  */
 
 #include <string.h>
@@ -38,16 +38,16 @@ static uint32_t eval_e73(const ProbeSnapshot *snap) {
 /* Signal definition table (K1 = M8265 data path, K2 = M8266 control) */
 
 #define D(chip, alias, desc, fld, sz, bit) \
-    { chip, alias, desc, 1, offsetof(ProbeSnapshot, fld), sz, bit, NULL }
+    { chip, alias, desc, 1, offsetof(ProbeSnapshot, fld), sz, bit, NULL, NULL }
 
 #define D_WHOLE(chip, alias, desc, fld, sz) \
-    { chip, alias, desc, 1, offsetof(ProbeSnapshot, fld), sz, PROBE_BIT_WHOLE, NULL }
+    { chip, alias, desc, 1, offsetof(ProbeSnapshot, fld), sz, PROBE_BIT_WHOLE, NULL, NULL }
 
 #define DERIVED(chip, alias, desc, fn) \
-    { chip, alias, desc, 2, 0, 0, 0, fn }
+    { chip, alias, desc, 2, 0, 0, 0, fn, NULL }
 
-#define ALIAS(name, desc, fld, sz) \
-    { NULL, name, desc, 1, offsetof(ProbeSnapshot, fld), sz, PROBE_BIT_WHOLE, NULL }
+#define ALIAS(group, name, desc, fld, sz) \
+    { NULL, name, desc, 1, offsetof(ProbeSnapshot, fld), sz, PROBE_BIT_WHOLE, NULL, group }
 
 static const ProbeDef probe_defs[] = {
 
@@ -139,42 +139,50 @@ static const ProbeDef probe_defs[] = {
     D("K1:E107:1", "CC_V",  "E107 overflow",       e107_out, 1, 0),
     D("K1:E107:2", "CC_C",  "E107 carry",          e107_out, 1, 1),
 
-    D_WHOLE("K1:E1-4:F", "ALU_OUT", "ALU result (16-bit)", alu_out, 2),
-    D("K1:E5:7",  "ALU_COUT", "ALU carry out (CLA)", alu_cout, 1, 0),
+    /* The slices take their carries (ALU COUT 3/7/11 L) from the 74S182
+     * look-ahead generator E27; the carry out of bit 15 is not wired,
+     * so ALU_COUT is a model value with no pin */
+    ALIAS("ALU", "ALU_OUT",   "ALU F outputs, K1 E7 E28 E18 E38",   alu_out, 2),
+    ALIAS("ALU", "ALU_COUT",  "carry out of bit 15 (model, no pin)", alu_cout, 1),
 
     DERIVED("K2:E85:8",  NULL,       "NAND(IR14,13,12) E53 /E2",  eval_e85_pin8),
     DERIVED("K2:E85:*",  "E53_EN",   "E53 full enable",           eval_e53_enable),
     DERIVED("K2:E50:3",  "TBIT_TRAP","TBIT AND ENAB_TBIT",        eval_e50_pin3),
     DERIVED("K2:E73:*",  NULL,       "NOR(IR08, IR15)",            eval_e73),
 
-    ALIAS("MPC",       "microprogram counter (9-bit)",   mpc, 2),
-    ALIAS("NEXT_MPC",  "next MPC (9-bit)",               next_mpc, 2),
-    ALIAS("IR",        "instruction register (16-bit)",   ir, 2),
-    ALIAS("PSW",       "processor status word",           psw, 2),
-    ALIAS("ALU_S",     "ALU function S3:S0",              alu_s, 1),
-    ALIAS("ALU_M",     "ALU mode",                        alu_mode, 1),
-    ALIAS("A_LEG",     "ALU A input",                     a_leg, 2),
-    ALIAS("B_LEG",     "ALU B input",                     b_leg, 2),
-    ALIAS("BA",        "bus address (18-bit)",             ba, 4),
-    ALIAS("DATA",      "UNIBUS data",                     unibus_data, 2),
-    ALIAS("BREG",      "B shift register",                b_reg, 2),
-    ALIAS("BXREG",     "BX shift register",               bx_reg, 2),
-    ALIAS("PC",        "R7/PC",                            pc, 2),
-    ALIAS("SP",        "R6/SP (kernel)",                   sp, 2),
-    ALIAS("R0",        "R0",                               r0, 2),
-    ALIAS("R1",        "R1",                               r1, 2),
-    ALIAS("IR_CODE",   "trap code (3-bit)",                ir_code, 1),
-    ALIAS("SVC_TRAP",  "service trap flag",                service_trap, 1),
-    ALIAS("BUS_ERR",   "bus error (NXM)",                  bus_error, 1),
-    ALIAS("BUS_OP",    "bus operation (0/1/2)",            bus_op, 1),
-    ALIAS("HALTED",    "CPU halted flag",                  halted, 1),
-    ALIAS("LONG_CYC",  "long cycle active",                long_cycle, 1),
-    ALIAS("BUF_TRAN",  "BUF_DAT_TRAN",                    buf_dat_tran, 1),
-    ALIAS("IR_VALID",  "IR valid for decode",              ir_valid, 1),
-    ALIAS("CYCLE_NS",  "cycle duration (ns)",              cycle_ns, 4),
-    ALIAS("SSYN_NS",   "slave SSYN response (ns)",        ssyn_ns, 2),
-    ALIAS("EOT_NS",    "EOT delay (ns)",                  eot_ns, 2),
-    ALIAS("NS",        "simulation time (ns)",             ns, 8),
+    ALIAS("Microsequencer", "MPC",       "microprogram counter, K2-7 E111 E112",   mpc, 2),
+    ALIAS("Microsequencer", "NEXT_MPC",  "next MPC (9-bit)",               next_mpc, 2),
+    ALIAS("Registers", "IR",        "instruction register, K2-5 E33 E56 E66 E67",   ir, 2),
+    ALIAS("Registers", "PSW",       "processor status word, K1-1 E97 (NZVC), K1-2 E99 (7:5), K1-4 E82 (15:12)",           psw, 2),
+    ALIAS("ALU", "ALU_S",     "ALU function S3:S0",              alu_s, 1),
+    ALIAS("ALU", "ALU_M",     "ALU mode",                        alu_mode, 1),
+    ALIAS("ALU", "A_LEG",     "ALU A inputs, K1 E7 E28 E18 E38",                     a_leg, 2),
+    ALIAS("ALU", "B_LEG",     "ALU B inputs, K1 E7 E28 E18 E38",                     b_leg, 2),
+    ALIAS("Unibus", "BA",        "bus address, K1-6 BA E44 E55 E65, VBA E47 E48",             ba, 4),
+    ALIAS("Unibus", "DATA",      "UNIBUS data, K1 E1 E23 E12 E33 (8641)",                     unibus_data, 2),
+    ALIAS("Registers", "BREG",      "B shift register, K1 E10 E31 E21 E41",                b_reg, 2),
+    ALIAS("Registers", "BXREG",     "BX shift register, K1 E11 E32 E22 E52",               bx_reg, 2),
+    ALIAS("Registers", "PC",        "R7/PC",                            pc, 2),
+    ALIAS("Registers", "SP",        "R6/SP (kernel)",                   sp, 2),
+    ALIAS("Registers", "R0",        "R0",                               r0, 2),
+    ALIAS("Registers", "R1",        "R1",                               r1, 2),
+    ALIAS("Registers", "R2",        "R2",                               r2, 2),
+    ALIAS("Registers", "R3",        "R3",                               r3, 2),
+    ALIAS("Registers", "R4",        "R4",                               r4, 2),
+    ALIAS("Registers", "R5",        "R5",                               r5, 2),
+    ALIAS("Registers", "SP_USER",   "R6/SP (user)",                     sp_user, 2),
+    ALIAS("Decode & traps", "IR_CODE",   "trap code (3-bit)",                ir_code, 1),
+    ALIAS("Decode & traps", "SVC_TRAP",  "service trap flag",                service_trap, 1),
+    ALIAS("Unibus", "BUS_ERR",   "bus error (NXM)",                  bus_error, 1),
+    ALIAS("Unibus", "BUS_OP",    "bus operation (0/1/2)",            bus_op, 1),
+    ALIAS("Decode & traps", "HALTED",    "CPU halted flag",                  halted, 1),
+    ALIAS("Unibus", "LONG_CYC",  "long cycle active",                long_cycle, 1),
+    ALIAS("Unibus", "BUF_TRAN",  "BUF_DAT_TRAN",                    buf_dat_tran, 1),
+    ALIAS("Decode & traps", "IR_VALID",  "IR valid for decode",              ir_valid, 1),
+    ALIAS("Emulator", "CYCLE_NS",  "cycle duration (ns)",              cycle_ns, 4),
+    ALIAS("Emulator", "SSYN_NS",   "slave SSYN response (ns)",        ssyn_ns, 2),
+    ALIAS("Emulator", "EOT_NS",    "EOT delay (ns)",                  eot_ns, 2),
+    ALIAS("Emulator", "NS",        "simulation time (ns)",             ns, 8),
 };
 
 #define PROBE_DEF_COUNT  (int)(sizeof(probe_defs) / sizeof(probe_defs[0]))
@@ -313,6 +321,10 @@ void probe_set_depth(Probe *p, uint32_t depth) {
     p->mask = d - 1;
 }
 
+void probe_set_trigger_edge(Probe *p, int edge) {
+    p->trigger_edge = edge ? 1 : 0;
+}
+
 void probe_set_trigger_pos(Probe *p, int pct) {
     if (pct < 0) pct = 0;
     if (pct > 100) pct = 100;
@@ -329,6 +341,9 @@ void probe_arm(Probe *p) {
     p->post_trigger_remaining = 0;
 
     p->div_counter = p->divider;
+    p->trigger_prev = -1;
+    p->triggered = 0;
+    p->trigger_abs = 0;
 
     if (p->trigger_signal < 0) {
         /* No trigger, immediate capture (free run) */
@@ -350,20 +365,34 @@ void probe_sample_slow(Probe *p, const ProbeSnapshot *snap) {
         /* Check trigger every ustep (don't miss it) */
         const ProbeDef *trig = &probe_defs[p->trigger_signal];
         uint32_t val = probe_read_value(snap, trig);
-        int triggered = (val & p->trigger_mask) == (p->trigger_value & p->trigger_mask);
+        int cond = (val & p->trigger_mask) == (p->trigger_value & p->trigger_mask);
+        int triggered = p->trigger_edge ? (cond && p->trigger_prev == 0) : cond;
+        p->trigger_prev = cond;
 
         /* Store sample only on divider tick */
+        int stored = 0;
         if (--p->div_counter == 0) {
             p->div_counter = p->divider;
             p->buf[p->head & p->mask] = *snap;
             p->head++;
             p->count++;
+            stored = 1;
         }
+
+        /* Like a hardware analyzer, ignore the trigger until the
+         * pre-trigger part of the buffer is full */
+        if (triggered && p->count < p->pre_trigger_count)
+            triggered = 0;
 
         if (triggered) {
             p->state = PROBE_CAPTURING;
             p->trigger_sample = ((p->head > 0 ? p->head : 1) - 1) & p->mask;
+            p->triggered = 1;
+            p->trigger_abs = p->head > 0 ? p->head - 1 : 0;
+            /* The trigger sample, if stored, is the first post-trigger one */
             p->post_trigger_remaining = p->depth - p->pre_trigger_count;
+            if (stored && p->post_trigger_remaining > 0)
+                p->post_trigger_remaining--;
             p->div_counter = p->divider;  /* reset divider on trigger */
             if (p->post_trigger_remaining == 0) {
                 p->state = PROBE_DONE;
@@ -386,4 +415,58 @@ void probe_sample_slow(Probe *p, const ProbeSnapshot *snap) {
         }
         return;
     }
+}
+
+uint32_t probe_valid_count(const Probe *p) {
+    return p->count < p->depth ? p->count : p->depth;
+}
+
+const ProbeSnapshot *probe_get(const Probe *p, uint32_t idx) {
+    uint32_t n = probe_valid_count(p);
+    if (idx >= n)
+        return NULL;
+    return &p->buf[(p->head - n + idx) & p->mask];
+}
+
+int probe_trigger_index(const Probe *p) {
+    if (!p->triggered)
+        return -1;
+    uint32_t first = p->head - probe_valid_count(p);
+    if (p->trigger_abs < first)
+        return -1;
+    return (int)(p->trigger_abs - first);
+}
+
+/* Chip names, from pdp11/kd11ea/roms/README.md for the ROMs */
+static const struct { const char *chip, *name; } probe_chips[] = {
+    { "K1:E107", "Carry and overflow condition-code generation" },
+    { "K2:E50",  "7408 AND gates" },
+    { "K2:E51",  "Service dispatch and trap-vector selection" },
+    { "K2:E52",  "Service and trap priority encoder" },
+    { "K2:E53",  "Instruction trap and HALT decoder" },
+    { "K2:E54",  "RESET and trace-trap control" },
+    { "K2:E59",  "Single-operand instruction decode, low part" },
+    { "K2:E60",  "Single-operand instruction decode, high part" },
+    { "K2:E61",  "Single-operand ALU control" },
+    { "K2:E62",  "Rotate and shift control" },
+    { "K2:E63",  "Operate, RTS and condition-code instruction decode" },
+    { "K2:E68",  "Instruction categorization for condition-code generation" },
+    { "K2:E69",  "Double-operand instruction decode, low part" },
+    { "K2:E70",  "Double-operand instruction decode, high part" },
+    { "K2:E71",  "Conditional branch decode" },
+    { "K2:E73",  "74S02 NOR gates" },
+    { "K2:E74",  "Extended Instruction Set decode" },
+    { "K2:E80",  "Sign EXtension, byte swapping and byte-write control" },
+    { "K2:E82",  "Primary microcode ALU-function expansion" },
+    { "K2:E83",  "Double-operand ALU control" },
+    { "K2:E85",  "74S10 NAND gates" },
+    { "K2:E87",  "B/BX shift-register mode expansion" },
+    { "K2:E102", "Micro-branch (BUT) expansion" },
+};
+
+const char *probe_chip_name(const char *chip) {
+    for (size_t i = 0; i < sizeof(probe_chips) / sizeof(probe_chips[0]); i++)
+        if (strcasecmp(chip, probe_chips[i].chip) == 0)
+            return probe_chips[i].name;
+    return NULL;
 }

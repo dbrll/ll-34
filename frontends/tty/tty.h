@@ -1,16 +1,12 @@
 /*
- * tty/tty.h -- Abstract TTY interface for ll-34
+ * frontends/tty/tty.h -- PDP-11 TTY interface
  *
- * On a real PDP-11/34, the DL11 serial port is a physical RS-232 connector,
- * separate from the operator console panel.  This interface decouples the
- * DL11 serial I/O from the host implementation, allowing multiple backends:
+ * This interface decouples the DL11 serial I/O from the host implementation, so
+ * we can plug multiple backends:
  *
- *   stdio  -- host terminal (stdin/stdout), the default
- *   tcp    -- TCP server (default port 1134, a nod to the PDP-11/34)
- *   pty    -- pseudo-terminal (/dev/ttysN)
- *
- * Each backend extends the TTY struct with its own private data and provides
- * the five method pointers below.
+ *   stdio  - host terminal (stdin/stdout), the default
+ *   tcp    - TCP server (default port 1134, a nod to the PDP-11/34)
+ *   pty    - pseudo-terminal (/dev/ttysN)
  */
 
 #ifndef TTY_H
