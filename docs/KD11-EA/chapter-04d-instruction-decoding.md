@@ -90,14 +90,14 @@ Decode ROMs DOP Decode (E68 and E69 on print K2-6) check the instruction in the
 IR (op code bits IR15-12). If the instruction is a double-operand type, the ROM
 outputs are asserted as follows:
 
-| Type Instruction | K2-6 IR Code 00 L | K2-7 MPC07 L | K2-7 MPC06 L | K2-7 MPC05 L | K2-7 MPC04 L | K2-7 MPC03 L |
-|-----------------|-------------------|-------------|-------------|-------------|-------------|-------------|
-| MOV (SM0\*DM0) | | | 0 | 0 | 0 | |
-| DOP (MOV+SUB) MOD (SM0\*DM0) (ADD, BIC, BIS) | | 0 | | | 0 | 0 |
-| SUB (SM0\*DM0) | | | 0 | | 0 | 0 |
-| DOP (SM0\*DM0) | | 0 | | 0 | 0 | |
-| Illegal Instructions | 0 | 0 | 0 | 0 | 0 | 0 |
-| DOP NONMOD (SM0\*DM0) (CMP, BIT) | | | 0 | | | |
+| Type Instruction                             | K2-6 IR Code 00 L | K2-7 MPC07 L | K2-7 MPC06 L | K2-7 MPC05 L | K2-7 MPC04 L | K2-7 MPC03 L |
+| -------------------------------------------- | ----------------- | ------------ | ------------ | ------------ | ------------ | ------------ |
+| MOV (SM0\*DM0)                               |                   |              | 0            | 0            | 0            |              |
+| DOP (MOV+SUB) MOD (SM0\*DM0) (ADD, BIC, BIS) |                   | 0            |              |              | 0            | 0            |
+| SUB (SM0\*DM0)                               |                   |              | 0            |              | 0            | 0            |
+| DOP (SM0\*DM0)                               |                   | 0            |              | 0            | 0            |              |
+| Illegal Instructions                         | 0                 | 0            | 0            | 0            | 0            | 0            |
+| DOP NONMOD (SM0\*DM0) (CMP, BIT)             |                   |              | 0            |              |              |              |
 
 NOTE: Ground on the MPC lines represents a logic "1."
 
@@ -111,17 +111,17 @@ CODE 00 L unasserted).
 
 Source microaddresses summary:
 
-| Instruction | Source Mode | Octal Microbranch Address |
-|-------------|-------------|--------------------------|
-| DOP (SM0\*DM0) | 0 | 110 |
-| | 1 | 111 |
-| | 2 | 112 |
-| | 3 | 113 |
-| | 4 | 114 |
-| | 5 | 115 |
-| | 6 | 116 |
-| | 7 | 117 |
-| Reserved DOP | | 00 |
+| Instruction    | Source Mode | Octal Microbranch Address |
+| -------------- | ----------- | ------------------------- |
+| DOP (SM0\*DM0) | 0           | 110                       |
+|                | 1           | 111                       |
+|                | 2           | 112                       |
+|                | 3           | 113                       |
+|                | 4           | 114                       |
+|                | 5           | 115                       |
+|                | 6           | 116                       |
+|                | 7           | 117                       |
+| Reserved DOP   |             | 00                        |
 
 NOTE: A ground on the MPC lines represents a logic 1.
 
@@ -132,12 +132,12 @@ Control Store, the DOP DEC ROMs decode the instructions, determine whether it is
 a modifying or nonmodifying instruction, and generate the following micro-PC
 addresses.
 
-| Type Instruction | K2-7 MPC07 L | K2-7 MPC06 L | K2-7 MPC05 L | K2-7 MPC04 L | K2-7 MPC03 L |
-|-----------------|-------------|-------------|-------------|-------------|-------------|
-| Move (SM0\*DM0) | 0 | 0 | | 0 | |
-| Modify (ADD BIS BIC but not MOV or SUB) | 0 | 0 | | | |
-| Nonmodify (CMP BIT) | 0 | 0 | | | 0 |
-| SUB | 0 | 0 | 1 | 0 | 0 |
+| Type Instruction                        | K2-7 MPC07 L | K2-7 MPC06 L | K2-7 MPC05 L | K2-7 MPC04 L | K2-7 MPC03 L |
+| --------------------------------------- | ------------ | ------------ | ------------ | ------------ | ------------ |
+| Move (SM0\*DM0)                         | 0            | 0            |              | 0            |              |
+| Modify (ADD BIS BIC but not MOV or SUB) | 0            | 0            |              |              |              |
+| Nonmodify (CMP BIT)                     | 0            | 0            |              |              | 0            |
+| SUB                                     | 0            | 0            | 1            | 0            | 0            |
 
 The circuitry used to decode the destination mode field of the instruction being
 decoded is similar to that described above for microaddressing the source
@@ -150,13 +150,13 @@ ROM E73 on print K2-6 is also considered to be part of the DOP Decoder circuitry
 This ROM decodes all Extended Instruction Set (EIS) instructions, generating the
 following micro-PC addresses when K2-6 IR DECODE (1) H is asserted:
 
-| Type Instruction | K2-6 IR Code 00 L | K2-7 MPC07 L | K2-7 MPC06 L | K2-7 MPC05 L | K2-7 MPC04 L | K2-7 MPC03 L |
-|-----------------|-------------------|-------------|-------------|-------------|-------------|-------------|
-| Multiply or Divide (MUL, DIV) | | | 0 | 0 | | 0 |
-| Arithmetic Shift or Arithmetic Shift Combined (ASH, ASHC) | | | 0 | 0 | | |
-| SOP | | | 0 | | | 0 |
-| XOR | | 0 | | 0 | 0 | |
-| Reserved | 0 | 0 | 0 | 0 | 0 | 0 |
+| Type Instruction                                          | K2-6 IR Code 00 L | K2-7 MPC07 L | K2-7 MPC06 L | K2-7 MPC05 L | K2-7 MPC04 L | K2-7 MPC03 L |
+| --------------------------------------------------------- | ----------------- | ------------ | ------------ | ------------ | ------------ | ------------ |
+| Multiply or Divide (MUL, DIV)                             |                   |              | 0            | 0            |              | 0            |
+| Arithmetic Shift or Arithmetic Shift Combined (ASH, ASHC) |                   |              | 0            | 0            |              |              |
+| SOP                                                       |                   |              | 0            |              |              | 0            |
+| XOR                                                       |                   | 0            |              | 0            | 0            |              |
+| Reserved                                                  | 0                 | 0            | 0            | 0            | 0            | 0            |
 
 The K2-6 DEST L output of the EIS Decoder ROM (E73) allows the 74H01 (E64) on
 print K2-6 to place the contents of the destination mode field of the instruction
@@ -180,20 +180,26 @@ circuitry described in the double-operand instruction decoding section.
 
 Microaddresses for SOP instructions:
 
-| Instruction | Base Microbranch Address |
-|-------------|------------------------|
-| SOP Modify (CLR, COM, INC, DEC) | 040 |
-| SOP Non-Modify (TST) | 160 |
-| NEG | 150 |
-| Rotate and Shift | 170 |
-| JSR | 150 |
-| JMP | 020 |
-| MARK | 030 |
-| SWAB | 030 |
-| MFPI(D) | 100 |
-| MTPI(D) | 250 |
-| MFPS | 130 |
-| MTPS | 120 |
+| Instruction                     | Base Microbranch Address |
+| ------------------------------- | ------------------------ |
+| SOP Modify (CLR, COM, INC, DEC) | 040                      |
+| SOP Non-Modify (TST)            | 160                      |
+| NEG                             | 150                      |
+| Rotate and Shift                | 170                      |
+| JSR                             | 150                      |
+| JMP                             | 020                      |
+| MARK                            | (see transcription note) |
+| SWAB                            | 030                      |
+| MFPI(D)                         | 100                      |
+| MTPI(D)                         | 250                      |
+| MFPS                            | 130                      |
+| MTPS                            | 120                      |
+
+Transcription note: the original MARK row has no address printed. The 030
+on the following row belongs to SWAB; it is not evidence for a MARK entry.
+A separate source, MP00082 Vol.2, PDF p.31, flow sheet 17 block 17-A,
+explicitly gives **020** for MARK (then 553, 555, 436, 556, 557, 551, 561).
+MARK's six low instruction bits are an offset, not a destination mode.
 
 The SOP Microbranch ROM (E59) is also used to decode JSR instructions. This
 decoding is performed in the same manner as that for SOP instructions. The K2-6
@@ -206,12 +212,12 @@ ROM. Its purpose, however, is to decode illegal, reserved, and trap instructions
 The three output signals K2-6 IR CODE 00 L through K2-6 IR CODE 02 L are enabled
 as follows:
 
-| Instructions | IR Code 02 | IR Code 01 | IR Code 00 |
-|-------------|-----------|-----------|-----------|
-| Reserved | 1 | 1 | 0 |
-| Illegal (JMP or JSR Mode 0) | 1 | 0 | 1 |
-| EMT | 0 | 1 | 0 |
-| Trap | 0 | 0 | 1 |
+| Instructions                | IR Code 02 | IR Code 01 | IR Code 00 |
+| --------------------------- | ---------- | ---------- | ---------- |
+| Reserved                    | 1          | 1          | 0          |
+| Illegal (JMP or JSR Mode 0) | 1          | 0          | 1          |
+| EMT                         | 0          | 1          | 0          |
+| Trap                        | 0          | 0          | 1          |
 
 The fourth output signal of the SOP Decode ROM enables the destination mode
 monitoring circuitry described in the double-operand instruction decoding section.
@@ -237,14 +243,14 @@ IR08 and IR15 are low and K2-6 IR DECODE (1) L is active. The PDP-11 operate
 instructions are decoded into the following micro-PC addresses on the ROM outputs
 K2-7 MPC 00 L through K2-7 MPC 03 L.
 
-| Instruction | Microbranch Address |
-|-------------|-------------------|
-| Reset | 003 |
-| RTI/RTT | 011 |
-| Set Condition Codes | 007 |
-| Clear Condition Codes | 006 |
-| RTS | 004 |
-| Wait | 014 |
+| Instruction           | Microbranch Address |
+| --------------------- | ------------------- |
+| Reset                 | 003                 |
+| RTI/RTT               | 011                 |
+| Set Condition Codes   | 007                 |
+| Clear Condition Codes | 006                 |
+| RTS                   | 004                 |
+| Wait                  | 014                 |
 
 **Reset/Trap Decode ROM (E53).** Decodes Reset, RTT, and RTI instructions and
 activates the outputs K2-6 START RESET H and K2-6 ENAB TBIT H accordingly. This
@@ -258,13 +264,13 @@ outputs accordingly. The K2-3 USER MODE H input also allows this ROM to treat
 Halt instructions as reserved instructions when operating in the memory
 management User mode.
 
-| Instruction | IR Code 02 | IR Code 01 | IR Code 00 |
-|-------------|-----------|-----------|-----------|
-| Reserved | | 1 | 0 |
-| Illegal | | 0 | 1 |
-| BPT | | 0 | 0 |
-| IOT | 0 | 1 | 1 |
-| HALT | Enable HLT RQST L | | |
+| Instruction | IR Code 02        | IR Code 01 | IR Code 00 |
+| ----------- | ----------------- | ---------- | ---------- |
+| Reserved    |                   | 1          | 0          |
+| Illegal     |                   | 0          | 1          |
+| BPT         |                   | 0          | 0          |
+| IOT         | 0                 | 1          | 1          |
+| HALT        | Enable HLT RQST L |            |            |
 
 ---
 
@@ -273,10 +279,10 @@ management User mode.
 The AUX Control circuitry on the KD11-E consists of three bipolar ROMs, shown on
 K2-5.
 
-| ROM | Name |
-|-----|------|
-| 32 x 8-bit | DOP (E81) |
-| 256 x 4-bit | SOP (E60) |
+| ROM         | Name            |
+| ----------- | --------------- |
+| 32 x 8-bit  | DOP (E81)       |
+| 256 x 4-bit | SOP (E60)       |
 | 256 x 4-bit | ROT/SHIFT (E61) |
 
 These ROMs determine the ALU operation to be performed whenever the microcode
@@ -290,16 +296,16 @@ following table expresses the outputs of this ROM as a function of the
 instruction being performed. (B represents the B register, A represents any
 scratchpad register, and F represents the ALU output.)
 
-| Instruction | ALU Operation | Func Code 03 | Func Code 02 | Func Code 01 | Func Code 00 |
-|-------------|--------------|--------------|--------------|--------------|--------------|
-| MOV(B) | F <- A | 0 | 1 | 0 | 1 |
-| CMP(B) | F <- A minus B | 0 | 1 | 0 | 0 |
-| ADD | F <- A plus B | 1 | 0 | 0 | 0 |
-| SUB | F <- A minus B | 0 | 1 | 0 | 0 |
-| BIT(B) | F <- A AND B | 1 | 0 | 0 | 1 |
-| BIC(B) | F <- A AND NOT B | 1 | 0 | 1 | 0 |
-| BIS(B) | F <- A OR B | 1 | 0 | 1 | 1 |
-| XOR | F <- A XOR B | 1 | 1 | 0 | 0 |
+| Instruction | ALU Operation    | Func Code 03 | Func Code 02 | Func Code 01 | Func Code 00 |
+| ----------- | ---------------- | ------------ | ------------ | ------------ | ------------ |
+| MOV(B)      | F <- A           | 0            | 1            | 0            | 1            |
+| CMP(B)      | F <- A minus B   | 0            | 1            | 0            | 0            |
+| ADD         | F <- A plus B    | 1            | 0            | 0            | 0            |
+| SUB         | F <- A minus B   | 0            | 1            | 0            | 0            |
+| BIT(B)      | F <- A AND B     | 1            | 0            | 0            | 1            |
+| BIC(B)      | F <- A AND NOT B | 1            | 0            | 1            | 0            |
+| BIS(B)      | F <- A OR B      | 1            | 0            | 1            | 1            |
+| XOR         | F <- A XOR B     | 1            | 1            | 0            | 0            |
 
 ### AUX SOP ROM (E60)
 
@@ -307,32 +313,32 @@ Decodes single-operand instructions, and is enabled by K2-8 AUX SETUP H. The
 following table expresses the ROM outputs as a function of the SOP instruction
 decoded.
 
-| Instruction | ALU Function | Func Code 03 | Func Code 02 | Func Code 01 | Func Code 00 |
-|-------------|-------------|--------------|--------------|--------------|--------------|
-| SWAB | F <- A | 0 | 1 | 0 | 1 |
-| CLR(B) | F <- ZERO | 0 | 0 | 0 | 0 |
-| COM(B) | F <- NOT A | 0 | 0 | 0 | 1 |
-| INC(B) | F <- A plus 1 | 0 | 0 | 1 | 0 |
-| DEC(B) | F <- A minus 1 | 0 | 0 | 1 | 1 |
-| NEG(B) | F <- A minus B | 0 | 1 | 0 | 0 |
-| ADC(B) CBIT=0 | F <- A | 0 | | 0 | |
-| ADC(B) CBIT=1 | F <- A plus | 0 | 0 | | 0 |
-| SBC(B) CBIT=0 | F <- A | 0 | | 0 | |
-| SBC(B) CBIT=1 | F <- A minus | 0 | 0 | 1 | 1 |
-| TST(B) | F <- A | 0 | 1 | 0 | 1 |
-| ROR(B) | F <- B | 0 | 1 | 1 | 0 |
-| ROL(B) | F <- B | 0 | 1 | 1 | 0 |
-| ASR(B) | F <- B | 0 | 1 | 1 | 0 |
-| ASL(B) | F <- B | 0 | 1 | 1 | 0 |
-| MARK | N/A | 0 | 0 | 0 | 0 |
-| MFPI | F <- A | 0 | 1 | 0 | 1 |
-| MTPI | F <- A | 0 | 1 | 0 | 1 |
-| SXT NBIT=0 | F <- | 0 | 0 | 0 | 0 |
-| SXT NBIT=1 | F <- | 0 | 1 | 1 | 0 |
-| MTPS | F <- A | 0 | 1 | 0 | 1 |
-| MFPD | F <- A | 0 | 1 | 0 | 1 |
-| MTPD | F <- A | 0 | 1 | 0 | 1 |
-| MFPS | F <- A | 0 | 1 | 0 | 1 |
+| Instruction   | ALU Function   | Func Code 03 | Func Code 02 | Func Code 01 | Func Code 00 |
+| ------------- | -------------- | ------------ | ------------ | ------------ | ------------ |
+| SWAB          | F <- A         | 0            | 1            | 0            | 1            |
+| CLR(B)        | F <- ZERO      | 0            | 0            | 0            | 0            |
+| COM(B)        | F <- NOT A     | 0            | 0            | 0            | 1            |
+| INC(B)        | F <- A plus 1  | 0            | 0            | 1            | 0            |
+| DEC(B)        | F <- A minus 1 | 0            | 0            | 1            | 1            |
+| NEG(B)        | F <- A minus B | 0            | 1            | 0            | 0            |
+| ADC(B) CBIT=0 | F <- A         | 0            |              | 0            |              |
+| ADC(B) CBIT=1 | F <- A plus    | 0            | 0            |              | 0            |
+| SBC(B) CBIT=0 | F <- A         | 0            |              | 0            |              |
+| SBC(B) CBIT=1 | F <- A minus   | 0            | 0            | 1            | 1            |
+| TST(B)        | F <- A         | 0            | 1            | 0            | 1            |
+| ROR(B)        | F <- B         | 0            | 1            | 1            | 0            |
+| ROL(B)        | F <- B         | 0            | 1            | 1            | 0            |
+| ASR(B)        | F <- B         | 0            | 1            | 1            | 0            |
+| ASL(B)        | F <- B         | 0            | 1            | 1            | 0            |
+| MARK          | N/A            | 0            | 0            | 0            | 0            |
+| MFPI          | F <- A         | 0            | 1            | 0            | 1            |
+| MTPI          | F <- A         | 0            | 1            | 0            | 1            |
+| SXT NBIT=0    | F <-           | 0            | 0            | 0            | 0            |
+| SXT NBIT=1    | F <-           | 0            | 1            | 1            | 0            |
+| MTPS          | F <- A         | 0            | 1            | 0            | 1            |
+| MFPD          | F <- A         | 0            | 1            | 0            | 1            |
+| MTPD          | F <- A         | 0            | 1            | 0            | 1            |
+| MFPS          | F <- A         | 0            | 1            | 0            | 1            |
 
 ### ROT/SHFT ROM (E61)
 
@@ -350,33 +356,33 @@ done to allow the condition codes to be set up without slowing the processor.
 
 ### Table 4-9 Auxiliary Control for Binary and Unary Instructions
 
-| Instruction | N and Z | V | C | ALU Function | CIN |
-|-------------|---------|---|---|-------------|-----|
-| MOV(B) | Load | Cleared | Not affected | A Logical | 0 |
-| CMP(B) | Load | Load like Subtract | Load like Subtract | A minus B | 0 |
-| BIT(B) | Load | Cleared | Not affected | A AND B Logical | 0 |
-| BIC(B) | Load | Cleared | Not affected | NOT A AND B Logical | 0 |
-| BIS(B) | Load | Cleared | Not affected | A OR B Logical | 0 |
-| ADD | Load | Set if operands are same sign and result different | Set if carry out | A plus B | 0 |
-| SUB | Load | Set if there was arithmetic overflow as a result of the operation (i.e., if operands were of opposite signs and the sign of the source was the same as the sign of the result; cleared otherwise | Set if carry | A minus B | 0 |
-| XOR | Load | Cleared | Not affected | A XOR B | 0 |
-| CLR(B) | Load | Cleared (like Add) | Clear | 0 | 0 |
-| COM(B) | Load | Cleared | Set | NOT A | 0 |
-| INC(B) | Load | Set if destination held 100000 before operand | Not affected | A plus 1 | +1 |
-| DEC(B) | Load | Set if result is 100000 | Not affected | A minus 1 | 1 |
-| NEG(B) | Load | Set if result is 100000 | Cleared if result is 0; set otherwise | A minus B | 0 |
-| ADC(B) | Load | Set if destination was 077777 and C = 1 | Set if destination was 177777 and C = 1 | A plus CBIT | 0 |
-| SBC(B) | Load | Set if destination was 100000 | Set if destination was 0 and C = 1; cleared otherwise | A minus CBIT | 0 |
-| TST(B) | Load | Cleared | Cleared | A Logical | 0 |
-| ROR(B) | Z <- 1 if (15:00)\*C=0; N <- C | Unaffected | (0) | B Logical | 0 |
-| ROL(B) | Z <- 1 if (14:00)\*C=0; N <- (14) | Unaffected | (15); B(7) | B Logical | 0 |
-| ASR(B) | Z <- 1 if (15:01)=0; N <- N | Unaffected | 0 <- (15) | B Logical | 0 |
-| ASL(B) | Z <- 1 if (14:01)=0; N <- (14) | | C <- (15) | B Logical | 0 |
-| SWAB | Load | Cleared | Cleared | A Logical | 0 |
-| SXT | Z-Load; N-Unaffected | Cleared | Cleared | 1 | 0 |
-| MFPI | Load | Cleared | Unaffected | A Logical | 0 |
-| MTPI | Load | Cleared | Unaffected | A Logical | 0 |
-| MTPS | Z-Set if SRC(7)=0; N-Set if SRC(7)=1 | Cleared | Unaffected | A Logical | 0 |
-| MFPD | Load | Cleared | Unaffected | A Logical | 0 |
-| MTPD | Load | Cleared | Unaffected | A Logical | 0 |
-| MFPS | Z-Set if PS(7)=0; N-Set if PS(7)=1 | Cleared | Unaffected | A Logical | 0 |
+| Instruction | N and Z                              | V                                                                                                                                                                                                | C                                                     | ALU Function        | CIN |
+| ----------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- | ------------------- | --- |
+| MOV(B)      | Load                                 | Cleared                                                                                                                                                                                          | Not affected                                          | A Logical           | 0   |
+| CMP(B)      | Load                                 | Load like Subtract                                                                                                                                                                               | Load like Subtract                                    | A minus B           | 0   |
+| BIT(B)      | Load                                 | Cleared                                                                                                                                                                                          | Not affected                                          | A AND B Logical     | 0   |
+| BIC(B)      | Load                                 | Cleared                                                                                                                                                                                          | Not affected                                          | NOT A AND B Logical | 0   |
+| BIS(B)      | Load                                 | Cleared                                                                                                                                                                                          | Not affected                                          | A OR B Logical      | 0   |
+| ADD         | Load                                 | Set if operands are same sign and result different                                                                                                                                               | Set if carry out                                      | A plus B            | 0   |
+| SUB         | Load                                 | Set if there was arithmetic overflow as a result of the operation (i.e., if operands were of opposite signs and the sign of the source was the same as the sign of the result; cleared otherwise | Set if carry                                          | A minus B           | 0   |
+| XOR         | Load                                 | Cleared                                                                                                                                                                                          | Not affected                                          | A XOR B             | 0   |
+| CLR(B)      | Load                                 | Cleared (like Add)                                                                                                                                                                               | Clear                                                 | 0                   | 0   |
+| COM(B)      | Load                                 | Cleared                                                                                                                                                                                          | Set                                                   | NOT A               | 0   |
+| INC(B)      | Load                                 | Set if destination held 100000 before operand                                                                                                                                                    | Not affected                                          | A plus 1            | +1  |
+| DEC(B)      | Load                                 | Set if result is 100000                                                                                                                                                                          | Not affected                                          | A minus 1           | 1   |
+| NEG(B)      | Load                                 | Set if result is 100000                                                                                                                                                                          | Cleared if result is 0; set otherwise                 | A minus B           | 0   |
+| ADC(B)      | Load                                 | Set if destination was 077777 and C = 1                                                                                                                                                          | Set if destination was 177777 and C = 1               | A plus CBIT         | 0   |
+| SBC(B)      | Load                                 | Set if destination was 100000                                                                                                                                                                    | Set if destination was 0 and C = 1; cleared otherwise | A minus CBIT        | 0   |
+| TST(B)      | Load                                 | Cleared                                                                                                                                                                                          | Cleared                                               | A Logical           | 0   |
+| ROR(B)      | Z <- 1 if (15:00)\*C=0; N <- C       | Unaffected                                                                                                                                                                                       | (0)                                                   | B Logical           | 0   |
+| ROL(B)      | Z <- 1 if (14:00)\*C=0; N <- (14)    | Unaffected                                                                                                                                                                                       | (15); B(7)                                            | B Logical           | 0   |
+| ASR(B)      | Z <- 1 if (15:01)=0; N <- N          | Unaffected                                                                                                                                                                                       | 0 <- (15)                                             | B Logical           | 0   |
+| ASL(B)      | Z <- 1 if (14:01)=0; N <- (14)       |                                                                                                                                                                                                  | C <- (15)                                             | B Logical           | 0   |
+| SWAB        | Load                                 | Cleared                                                                                                                                                                                          | Cleared                                               | A Logical           | 0   |
+| SXT         | Z-Load; N-Unaffected                 | Cleared                                                                                                                                                                                          | Cleared                                               | 1                   | 0   |
+| MFPI        | Load                                 | Cleared                                                                                                                                                                                          | Unaffected                                            | A Logical           | 0   |
+| MTPI        | Load                                 | Cleared                                                                                                                                                                                          | Unaffected                                            | A Logical           | 0   |
+| MTPS        | Z-Set if SRC(7)=0; N-Set if SRC(7)=1 | Cleared                                                                                                                                                                                          | Unaffected                                            | A Logical           | 0   |
+| MFPD        | Load                                 | Cleared                                                                                                                                                                                          | Unaffected                                            | A Logical           | 0   |
+| MTPD        | Load                                 | Cleared                                                                                                                                                                                          | Unaffected                                            | A Logical           | 0   |
+| MFPS        | Z-Set if PS(7)=0; N-Set if PS(7)=1   | Cleared                                                                                                                                                                                          | Unaffected                                            | A Logical           | 0   |

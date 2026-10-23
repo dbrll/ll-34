@@ -2,7 +2,4 @@
 
 DEC documentation for the KD11-EA CPU, KY11-LB console board, M9301 bootstrap/terminator board, Unibus, and DL11-W serial line/clock option, converted to Markdown.
 
-The original DEC manuals are scanned PDFs with inconsistent quality, making OCR unreliable and full-text search difficult. These Markdown conversions provide searchable text and inline figures for reference during ll/34 development. The Unibus specification is an OCR transcription; verify exact signal names and numeric details against the original scan.
-
-- [Unibus Specification (1979)](Unibus/unibus-specification-1979.md)
-- [DL11-W Technical Manual (1982)](DL11-W/README.md) — four chapters and both appendices, with inline diagrams and transcribed tables; source inconsistencies flagged.
+The original DEC manuals are scanned PDFs with inconsistent quality, making OCR unreliable and full-text search difficult. These Markdown conversions provide searchable text and inline figures for reference during ll/34 development.
