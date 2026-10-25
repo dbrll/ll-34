@@ -1,0 +1,147 @@
+[General]
+decode_signals=0
+generated_signals=0
+meta_objs=1
+views=1
+
+[0]
+color=4279638298
+conv_options=0
+conversion_type=0
+enabled=true
+name=E97-1 | MPC 00
+
+[1]
+color=4287582722
+conv_options=0
+conversion_type=0
+enabled=true
+name=E97-2 | MPC 01
+
+[10]
+color=4279638298
+conv_options=0
+conversion_type=0
+enabled=true
+name=E38-2 | K2-9 SPA DST SEL 0 (1) H
+
+[11]
+color=4287582722
+conv_options=0
+conversion_type=0
+enabled=true
+name=E38-12 | K2-9 SPA DST SEL 1 (1) H
+
+[12]
+color=4291559424
+conv_options=0
+conversion_type=0
+enabled=true
+name=E97-14 | O1
+
+[13]
+color=4294277376
+conv_options=0
+conversion_type=0
+enabled=true
+name=E97-13 | O2
+
+[14]
+color=4293776384
+conv_options=0
+conversion_type=0
+enabled=false
+name=14
+
+[15]
+color=4285780502
+conv_options=0
+conversion_type=0
+enabled=true
+name=E97-17 | MPC 08
+
+[2]
+color=4291559424
+conv_options=0
+conversion_type=0
+enabled=true
+name=E97-3 | MPC 02
+
+[3]
+color=4294277376
+conv_options=0
+conversion_type=0
+enabled=true
+name=E97-4 | MPC 03
+
+[4]
+color=4293776384
+conv_options=0
+conversion_type=0
+enabled=true
+name=E97-6  | MPC 04
+
+[5]
+color=4285780502
+conv_options=0
+conversion_type=0
+enabled=true
+name=E97-16 | MPC 05
+
+[6]
+color=4281623972
+conv_options=0
+conversion_type=0
+enabled=true
+name=E97-5  | MPC 06
+
+[7]
+color=4285878395
+conv_options=0
+conversion_type=0
+enabled=true
+name=E97-7  | MPC 07
+
+[8]
+color=4287138437
+conv_options=0
+conversion_type=0
+enabled=true
+name=E38-9 | K1-5 PROC CLK L
+
+[9]
+color=4293848812
+conv_options=0
+conversion_type=0
+enabled=true
+name=E38-7 | K2-9 BUT SERVICE (1) H
+
+[meta_obj0]
+assoc_view=0
+end_time=22 serialization::archive 17 0 0 0 0 1868902 82805052 47379687 59211796 1163476 48946197 -8 0 0 6
+start_time=22 serialization::archive 17 0 0 0 0 1831473 99999999 99492397 15135718 14284659 50290810 -8 0 0 6
+type=selection
+
+[view0]
+0\trace_height=26
+1\trace_height=26
+10\trace_height=26
+11\trace_height=26
+12\trace_height=26
+13\trace_height=26
+14\trace_height=26
+15\trace_height=26
+2\trace_height=26
+3\trace_height=26
+4\trace_height=26
+5\trace_height=26
+6\trace_height=26
+7\trace_height=26
+8\trace_height=26
+9\trace_height=26
+offset=22 serialization::archive 17 0 0 0 0 19934475 48275912 86172605 57803092 52440928 9006964 -8 0 0 6
+scale=3.3469906484550092e-07
+segment_display_mode=1
+splitter_state=@ByteArray(\0\0\0\xff\0\0\0\x1\0\0\0\x2\0\0\x1\x5\0\0\a\xb3\x1\0\0\0\x1\x1\0\0\0\x1\0)
+v_offset=-131
+zero_offset=22 serialization::archive 17 0 0 0 0 0 0 0 0 0 0 0 0 0 6

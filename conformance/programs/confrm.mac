@@ -1,0 +1,986 @@
+	.TITLE	CONFRM
+;
+; CONFRM: Test instruction set conformity.
+;
+; Runs every opcode from 000000 to 167777, except FP11, WAIT and HALT,
+; and prints a checksum per block of opcodes: the registers, the PSW,
+; the trap taken, the PC reached and the memory written.
+;
+; Each test runs one instruction in SLOT. The memory around it holds W,
+; a TRAP, so that every test ends in the same handler.
+;
+W	= 104512		; TRAP 112
+WB	= 104444		; TRAP 44, fill of the destination zones
+A	= 020040		; R0, R1, R3-R5 and user SP, equal bytes (SWAB)
+	.IIF NDF B, B = 012024	; R2, the destination register
+KSTK	= 030060		; kernel stack during a test, bytes equal
+SLOT	= 010016		; SLOT+2 has equal bytes (SWAB PC)
+	.IIF NDF DBG, DBG = 0
+	.IIF NDF MMU, MMU = 0	; 1: phase M only (memory management)
+	.IIF NDF E62S, E62S = 0	; 1: phase S only (single operand, odd register)
+	.IIF NDF MACF0, MACF0 = 0
+	.IIF NDF MACF1, MACF1 = 4	; access control fields MACF0 to MACF1-1
+	.IIF NDF P1LO, P1LO = 400	; phase P range and block size
+	.IIF NDF P1HI, P1HI = 170000
+	.IIF NDF P1MSK, P1MSK = 7777
+	.IIF NDF PULO, PULO = 1		; phase U range and block size
+	.IIF NDF PUMSK, PUMSK = 77
+MSTK	= 000776		; kernel stack of the program itself
+PSW	= 177776
+XCSR	= 177564
+XBUF	= 177566
+	.IIF EQ MMU, NSREG = 10.
+	.IIF NE MMU, NSREG = 13.
+SR0	= 177572
+SR2	= 177576
+UPDR	= 177600		; user PDR 0-7
+UPAR	= 177640		; user PAR 0-7
+KPDR	= 172300
+KPAR	= 172340
+LKS	= 177546		; line clock, polled (no interrupt)
+
+	.ASECT
+	.=1000
+START:	MOV	#MSTK,SP
+	MOV	#340,@#PSW
+	CLR	R0			; vector address
+	CLR	R1			; vector address / 4
+1$:	MOV	#HANDLR,(R0)+
+	MOV	R1,R2
+	BIC	#177760,R2		; bits 3-0 of PSW: k & 17
+	MOV	R1,R3
+	ASL	R3
+	BIC	#177637,R3		; bits 6-5 of PSW: k & 60
+	BIS	R3,R2
+	BIS	#200,R2
+	MOV	R2,(R0)+
+	INC	R1
+	CMP	R0,#400
+	BLO	1$
+	CLR	@#HASCLK
+	MOV	#2$,@#CONT		; if the clock is absent, the trap comes back here
+	CLR	@#177560
+	CLR	@#XCSR
+	CLR	@#LKS
+	INC	@#HASCLK
+2$:	MOV	#MSTK,SP
+	JSR	PC,@#FILL
+	MOV	#HDR,R1
+	JSR	PC,@#PUTS
+	.IF DF ZONLY
+	JMP	@#PZ
+	.ENDC
+	.IF DF LIST
+	JMP	@#PL
+	.ENDC
+	.IF NE MMU
+	JSR	PC,@#MMUINI
+	JMP	@#PM
+	.ENDC
+	.IF NE E62S
+	JMP	@#PS
+	.ENDC
+
+; ---- phase 1: opcodes 000400-167777, user mode -------------------------
+	MOV	#'P,@#PFX
+	MOV	#P1LO,@#V
+	MOV	#P1LO,@#CHST
+	CLR	@#CK
+	CLR	@#CK2
+P1:	MOV	@#V,R0
+	CMP	R0,#P1HI
+	BLO	0$
+	JMP	@#P1END
+0$:
+	BIT	#P1MSK,R0
+	BNE	1$
+	JSR	PC,@#CHUNK		; block boundary
+1$:	MOV	R0,R1
+	BIS	#2,R1
+	CLR	@#BRF
+	BIT	#74000,R0
+	BNE	2$
+	BIC	#7,R1			; branch: 000400-003777, 100000-103777
+	INC	R1
+	INC	@#BRF
+	BR	4$
+2$:	MOV	R0,R2
+	BIC	#107777,R2		; IR 14-12
+	BEQ	4$
+	CMP	R2,#70000
+	BEQ	3$
+	MOV	R0,R3			; double operand: no source -(PC) or @-(PC)
+	BIC	#170077,R3
+	CMP	R3,#4700
+	BEQ	P1NXT
+	CMP	R3,#5700
+	BEQ	P1NXT
+	BR	4$
+3$:	BIT	#4000,R0		; MUL DIV ASH ASHC: not with R6 or R7
+	BNE	4$
+	MOV	R0,R3
+	BIC	#177177,R3
+	CMP	R3,#600
+	BEQ	P1NXT
+4$:	MOV	R1,@#IRV
+	MOV	#VL0,@#VLST		; data variants (source registers, R2)
+	MOV	#CC16,@#CCP
+	TST	@#BRF
+	BNE	P1CC
+	MOV	#CC4,@#CCP
+	CLR	R3
+	MOV	R1,R2
+	BIC	#107777,R2		; double operand, source mode 0:
+	BEQ	5$			; negative source registers too
+	CMP	R2,#70000
+	BEQ	5$
+	BIT	#7000,R1
+	BNE	5$
+	MOV	#2,R3
+5$:	BIT	#70,R1			; destination mode 0: odd and
+	BNE	51$			; negative odd R2 too
+	INC	R3
+	CMP	R3,#1			; double operand, source register R2
+	BNE	6$			; used as an address: no NEGO, it
+	MOV	R1,R2			; would point outside the zones
+	BIC	#107777,R2
+	BEQ	6$
+	CMP	R2,#70000
+	BEQ	6$
+	MOV	R1,R2
+	BIC	#177077,R2		; source register field
+	CMP	R2,#200
+	BNE	6$
+	MOV	#10,R3			; list VL8
+	BR	6$
+51$:	MOV	R1,R2			; other modes: four destination
+	BIC	#777,R2			; contents, not for JSR
+	CMP	R2,#4000
+	BEQ	6$
+	ADD	#4,R3
+6$:	ASL	R3
+	MOV	VLTAB(R3),@#VLST
+P1CC:	MOV	@#CCP,R0
+	MOV	(R0)+,R1
+	BMI	P1NXT
+	MOV	R0,@#CCP
+	BIS	#170340,R1		; user mode, previous user, priority 7
+	MOV	R1,@#PSWV
+	MOV	@#VLST,@#VP
+P1VV:	MOV	@#VP,R0
+	MOV	(R0)+,R1
+	BEQ	P1CC
+	MOV	(R0)+,@#R2V
+	MOV	(R0)+,@#BFV
+	MOV	R0,@#VP
+	MOV	R1,@#RSV
+	MOV	#P1VV,@#CONT
+	JMP	@#TESTU
+P1NXT:	ADD	#10,@#V
+	JMP	@#P1
+P1END:	JSR	PC,@#CHUNK
+
+; ---- phase U: opcodes 000000-000377, user mode -------------------------
+; Not WAIT, nor JMP -(PC), SWAB -(PC), SWAB @-(PC), which loop.
+	MOV	#'U,@#PFX
+	MOV	#A,@#RSV
+	MOV	#WB,@#BFV
+	MOV	#PULO,@#V
+	MOV	#PULO,@#CHST
+PU:	MOV	@#V,R0
+	CMP	R0,#400
+	BHIS	PUEND
+	BIT	#PUMSK,R0
+	BNE	1$
+	JSR	PC,@#CHUNK
+1$:	JSR	PC,@#R0SKIP
+	BCS	PUNXT
+	MOV	R0,@#IRV
+	MOV	#CC16,@#CCP
+PUCC:	MOV	@#CCP,R0
+	MOV	(R0)+,R1
+	BMI	PUNXT
+	MOV	R0,@#CCP
+	BIS	#170340,R1
+	MOV	R1,@#PSWV
+	MOV	#B,@#R2V
+	MOV	#1$,@#CONT
+	JMP	@#TESTU
+1$:	MOV	@#IRV,R0		; destination register R2: also odd
+	BIC	#177770,R0
+	CMP	R0,#2
+	BNE	PUCC
+	MOV	#B+1,@#R2V
+	MOV	#PUCC,@#CONT
+	JMP	@#TESTU
+PUNXT:	INC	@#V
+	JMP	@#PU
+PUEND:	JSR	PC,@#CHUNK
+	.IF DF FINE			; localisation run: phases P and U only
+	MOV	#ENDM,R1
+	JSR	PC,@#PUTS
+	JMP	@#START
+	.ENDC
+
+; ---- phase C: CMP Rs,Rd and CMP Rs,(Rd), every register, both modes ------
+	MOV	#'C,@#PFX
+	MOV	#A,@#RSV
+	MOV	#WB,@#BFV
+	MOV	#340,@#PB
+	MOV	#TESTK,@#EP
+PCM0:	CLR	@#V
+	CLR	@#CHST
+PCM:	MOV	@#V,R0
+	CMP	R0,#200
+	BHIS	PCMEND
+	MOV	R0,R1
+	BIC	#177617,R1		; s
+	ASL	R1
+	ASL	R1			; s << 6
+	BIC	#177760,R0		; dm, d
+	BIS	R1,R0
+	BIS	#20000,R0
+	MOV	R0,@#IRV
+	MOV	#CC4,@#CCP
+PCMCC:	MOV	@#CCP,R0
+	MOV	(R0)+,R1
+	BMI	PCMNX
+	MOV	R0,@#CCP
+	BIS	@#PB,R1
+	MOV	R1,@#PSWV
+	MOV	#B,@#R2V
+	MOV	#PCMCC,@#CONT
+	JMP	@EP
+PCMNX:	INC	@#V
+	JMP	@#PCM
+PCMEND:	JSR	PC,@#CHUNK
+	CMP	@#EP,#TESTU
+	BEQ	1$
+	MOV	#'c,@#PFX		; c: the same in user mode
+	MOV	#170340,@#PB
+	MOV	#TESTU,@#EP
+	JMP	@#PCM0
+1$:
+
+; ---- phase K: opcodes 000000-000377, kernel mode ------------------------
+; Not HALT, WAIT, nor JMP -(PC), SWAB -(PC), SWAB @-(PC), which loop.
+	MOV	#'K,@#PFX
+	MOV	#A,@#RSV
+	MOV	#WB,@#BFV
+	MOV	#2,@#V
+	MOV	#2,@#CHST
+PK:	MOV	@#V,R0
+	CMP	R0,#400
+	BHIS	PKEND
+	BIT	#77,R0
+	BNE	1$
+	JSR	PC,@#CHUNK
+1$:	CMP	R0,#5
+	BEQ	PKNXT
+	JSR	PC,@#R0SKIP
+	BCS	PKNXT
+	MOV	R0,@#IRV
+	MOV	#CC16,@#CCP
+PKCC:	MOV	@#CCP,R0
+	MOV	(R0)+,R1
+	BMI	PKNXT
+	MOV	R0,@#CCP
+	BIS	#340,R1
+	MOV	R1,@#PSWV
+	MOV	#B,@#R2V
+	MOV	#1$,@#CONT
+	JMP	@#TESTK
+1$:	MOV	@#IRV,R0		; destination register R2: also odd
+	BIC	#177770,R0
+	CMP	R0,#2
+	BNE	PKCC
+	MOV	#B+1,@#R2V
+	MOV	#PKCC,@#CONT
+	JMP	@#TESTK
+PKNXT:	INC	@#V
+	JMP	@#PK
+PKEND:	JSR	PC,@#CHUNK
+
+; ---- phase Z: HALT in user mode, then RESET in kernel mode --------------
+PZ:	MOV	#'Z,@#PFX
+	MOV	#A,@#RSV
+	MOV	#WB,@#BFV
+	CLR	@#V
+	CLR	@#CHST
+	CLR	@#IRV			; HALT, user mode
+	MOV	#170340,@#PSWV
+	MOV	#B,@#R2V
+	MOV	#1$,@#CONT
+	JMP	@#TESTU
+1$:	MOV	#5,@#IRV		; RESET, kernel mode
+	MOV	#340,@#PSWV
+	MOV	#2$,@#CONT
+	JMP	@#TESTK
+2$:	MOV	#MSTK,SP		; RESET cleared the console interface
+	JSR	PC,@#CHUNK
+	MOV	#ENDM,R1
+	JSR	PC,@#PUTS
+	JMP	@#START
+
+	.IF DF LIST
+; ---- phase L: IR, R2, vector PSW, PC, R2 ----
+PL:	MOV	#LTAB,@#VP
+	MOV	#A,@#RSV
+	MOV	#WB,@#BFV
+1$:	MOV	@#VP,R0
+	MOV	(R0)+,@#IRV
+	BEQ	2$
+	MOV	(R0)+,@#R2V
+	MOV	R0,@#VP
+	MOV	#170340,@#PSWV
+	MOV	#3$,@#CONT
+	JMP	@#TESTU
+3$:	MOV	@#IRV,R1
+	JSR	PC,@#PUTO
+	JSR	PC,@#SPACE
+	MOV	@#R2V,R1
+	JSR	PC,@#PUTO
+	JSR	PC,@#SPACE
+	MOV	@#SREGS+14,R1
+	JSR	PC,@#PUTO
+	JSR	PC,@#SPACE
+	MOV	@#SREGS+20,R1
+	JSR	PC,@#PUTO
+	JSR	PC,@#SPACE
+	MOV	@#SREGS+4,R1
+	JSR	PC,@#PUTO
+	MOV	#15,R0
+	JSR	PC,@#PUTC
+	MOV	#12,R0
+	JSR	PC,@#PUTC
+	BR	1$
+2$:	MOV	#ENDM,R1
+	JSR	PC,@#PUTS
+	JMP	@#START
+SPACE:	MOV	#40,R0
+	JMP	@#PUTC
+LTAB:	.WORD	000312,B+1		; SWAB (R2), odd
+	.WORD	000312,B		; SWAB (R2), even
+	.WORD	000332,B+1		; SWAB @(R2)+, odd pointer address
+	.WORD	000342,B+1		; SWAB -(R2), odd
+	.WORD	005712,B+1		; TST (R2), odd
+	.WORD	105712,B+1		; TSTB (R2), odd
+	.WORD	105732,B+1		; TSTB @(R2)+, odd pointer address
+	.WORD	112302,B+1		; MOVB @(R2)+,R2, odd pointer address
+	.WORD	122302,B+1		; CMPB @(R2)+,R2, odd pointer address
+	.WORD	112212,B		; MOVB (R2)+,(R2)
+	.WORD	112232,B		; MOVB (R2)+,@(R2)+: pointer at B+1
+	.WORD	112202,B+1		; MOVB (R2)+,R2, odd
+	.WORD	122202,B+1		; CMPB (R2)+,R2, odd
+	.WORD	112602,B+1		; MOVB X(R2),R2, odd
+	.WORD	0
+	.ENDC
+
+	.IF NE MMU
+; ---- phase M: memory management, user mode ------------------------------
+; One line per access control field and relocation: ACF * 10000 + PAR.
+PM:	MOV	#A,@#RSV
+	MOV	#WB,@#BFV
+	MOV	#B,@#R2V
+	MOV	#170340,@#PSWV
+	MOV	#PGTAB,@#MPG
+M1:	MOV	@#MPG,R0		; next page
+	MOV	(R0)+,R1
+	BNE	1$
+	JMP	@#MEND
+1$:	MOV	R0,@#MPG
+	MOV	(R1)+,@#PFX
+	MOV	(R1)+,@#MPDRA
+	MOV	(R1)+,@#MPARA
+	MOV	(R1)+,@#MPARD
+	MOV	(R1)+,@#MPLFT
+	MOV	(R1)+,@#MPART
+	MOV	(R1)+,@#MITAB
+	MOV	#MACF0,@#MACF		; first access control field (debug)
+M2:	MOV	@#MPART,@#MPARP		; access control field loop
+M3:	MOV	@#MPARP,R0		; relocation loop: one block each
+	MOV	(R0)+,R1
+	BPL	1$
+	INC	@#MACF
+	CMP	@#MACF,#MACF1
+	BLT	M2
+	BR	M1
+1$:	MOV	R0,@#MPARP
+	MOV	R1,@#MPARV
+	MOV	@#MACF,R0
+	SWAB	R0
+	ASL	R0
+	ASL	R0
+	ASL	R0
+	ASL	R0			; ACF * 10000
+	BIS	R1,R0
+	MOV	R0,@#CHST
+	MOV	R0,@#V
+	CLR	@#CK
+	CLR	@#CK2
+	CLR	@#TICKS
+	CLR	@#MED
+M4:	MOV	@#MPLFT,@#MPLFP		; expansion direction loop
+M5:	MOV	@#MPLFP,R0		; page length loop
+	MOV	(R0)+,R1
+	BPL	1$
+	INC	@#MED
+	CMP	@#MED,#2
+	BLT	M4
+	JSR	PC,@#CHUNK		; end of block
+	BR	M3
+1$:	MOV	R0,@#MPLFP
+	SWAB	R1			; PLF in bits 14-8
+	MOV	@#MED,R2
+	ASL	R2
+	ASL	R2
+	ASL	R2
+	BIS	R2,R1			; ED, bit 3
+	MOV	@#MACF,R2
+	ASL	R2
+	BIS	R2,R1			; ACF, bits 2-1
+	MOV	R1,@#MPDRV
+	MOV	@#MITAB,@#MIP
+M6:	MOV	@#MIP,R0		; instruction loop
+	MOV	(R0)+,R1
+	BEQ	M5
+	MOV	R0,@#MIP
+	MOV	R1,@#IRV
+	MOV	#M6,@#CONT
+	JMP	@#TESTU
+MEND:	MOV	#ENDM,R1
+	JSR	PC,@#PUTS
+	JMP	@#START
+
+MMUINI:	MOV	#KPAR,R0
+	CLR	R1
+	MOV	#8.,R2
+1$:	MOV	R1,(R0)+
+	ADD	#200,R1
+	SOB	R2,1$
+	MOV	#7600,@#KPAR+16
+	MOV	#KPDR,R0
+	MOV	#8.,R2
+2$:	MOV	#77406,(R0)+
+	SOB	R2,2$
+	MOV	#UPAR,R0
+	CLR	R1
+	MOV	#8.,R2
+3$:	MOV	R1,(R0)+
+	ADD	#200,R1
+	SOB	R2,3$
+	MOV	#UPDR,R0
+	MOV	#7,R2
+4$:	MOV	#77406,(R0)+
+	SOB	R2,4$
+	CLR	(R0)
+	CLR	@#SR0
+	RTS	PC
+
+; page descriptors: phase letter, PDR, PAR, identity PAR, lengths,
+; relocations, instructions
+	.IF DF MONE			; detail run: page 2, identity PAR only
+PGTAB:	.WORD	PG2,0
+PAR2:	.WORD	400,-1
+	.IFF
+PGTAB:	.WORD	PG2,PG0,0
+	.ENDC
+PG2:	.WORD	'M,UPDR+4,UPAR+4,400,PLF2,PAR2,ITAB2
+PG0:	.WORD	'F,UPDR,UPAR,0,PLF0,PAR0,ITAB0
+PLF2:	.WORD	0,20,21,22,177,-1	; B is in block 21 of page 2
+	.IF NDF MONE
+PAR2:	.WORD	400,600,601,-1		; identity, physical page 3, +64 bytes
+	.ENDC
+PLF0:	.WORD	77,100,101,177,-1	; SLOT is in block 100 of page 0
+PAR0:	.WORD	0,-1
+ITAB0:	.WORD	000240,010100,0		; NOP, MOV R1,R0
+; Destination (R2) in modes 1-5: MOV R1, MOVB R1, CLR, CLRB, INC, TST,
+; TSTB, ADD R1, BIC R1, SWAB, ASL, COMB, MFPI, MTPI, JMP, JSR PC, XOR R1.
+; Source (R2) in modes 1-5: MOV, MOVB, CMP. Then MOV(B) (R2)+,(R2)+.
+ITAB2:
+	.WORD	010112,010122,010132,010142,010152,110112
+	.WORD	110122,110132,110142,110152,005012,005022
+	.WORD	005032,005042,005052,105012,105022,105032
+	.WORD	105042,105052,005212,005222,005232,005242
+	.WORD	005252,005712,005722,005732,005742,005752
+	.WORD	105712,105722,105732,105742,105752,060112
+	.WORD	060122,060132,060142,060152,040112,040122
+	.WORD	040132,040142,040152,000312,000322,000332
+	.WORD	000342,000352,006312,006322,006332,006342
+	.WORD	006352,105112,105122,105132,105142,105152
+	.WORD	006512,006522,006532,006542,006552,006612
+	.WORD	006622,006632,006642,006652,000112,000122
+	.WORD	000132,000142,000152,004712,004722,004732
+	.WORD	004742,004752,074112,074122,074132,074142
+	.WORD	074152,011201,012201,013201,014201,015201
+	.WORD	111201,112201,113201,114201,115201,021201
+	.WORD	022201,023201,024201,025201,012222,112222
+	.WORD	0
+DREL	= WB+2			; contents of the relocated zones (TRAP 46)
+REL1	= 60000+B-40000		; B through PAR 600
+REL2	= REL1+100		; B through PAR 601
+MPG:	.WORD	0
+MPDRA:	.WORD	UPDR+4			; PDR and PAR of the page under test
+MPARA:	.WORD	UPAR+4
+MPARD:	.WORD	400			; its identity PAR
+MPLFT:	.WORD	0
+MPART:	.WORD	0
+MITAB:	.WORD	0
+MACF:	.WORD	0
+MED:	.WORD	0
+MPARP:	.WORD	0
+MPLFP:	.WORD	0
+MIP:	.WORD	0
+MPDRV:	.WORD	0			; PDR and PAR for the test
+MPARV:	.WORD	0
+DRELV:	.WORD	DREL
+DREL2V:	.WORD	WB+4			; second relocated zone (TRAP 50)
+	.ENDC
+
+	.IF NE E62S
+; ---- phase S: single operand instructions on an odd register ------------
+PS:	MOV	#'S,@#PFX
+	MOV	#WB,@#BFV
+	MOV	#SRTAB,@#SRP
+S1:	MOV	@#SRP,R0		; next destination register
+	MOV	(R0)+,@#SREG
+	BPL	3$
+	MOV	#ENDM,R1
+	JSR	PC,@#PUTS
+	JMP	@#START
+3$:	MOV	R0,@#SRP
+	MOV	@#SREG,@#CHST
+	CLR	@#CK
+	CLR	@#CK2
+	CLR	@#TICKS
+	MOV	#STAB,@#SOP
+S2:	MOV	@#SOP,R0		; next operation
+	MOV	(R0)+,R1
+	BNE	1$
+	JSR	PC,@#CHUNK		; end of the register block
+	JMP	@#S1
+1$:	MOV	R0,@#SOP
+	MOV	R1,@#SBASE
+	CLR	@#SMD
+S3:	MOV	@#SBASE,R0		; mode loop
+	MOV	@#SMD,R1
+	ASL	R1
+	ASL	R1
+	ASL	R1
+	BIS	R1,R0
+	BIS	@#SREG,R0
+	MOV	R0,@#IRV
+	MOV	@#SMD,R1		; value list: register class, mode class
+	ASL	R1
+	MOV	SMCLS(R1),R1
+	CMP	@#SREG,#2
+	BNE	2$
+	ADD	#3,R1
+2$:	ASL	R1
+	MOV	SVTAB(R1),@#SVP
+	MOV	#XV1,@#XVP		; index words: W, and W+1 in modes 6-7
+	CMP	@#SMD,#6
+	BLO	S7
+	MOV	#XV2,@#XVP
+S7:	MOV	@#XVP,R0		; index word loop
+	MOV	(R0)+,@#XV
+	BEQ	S6
+	MOV	R0,@#XVP
+	MOV	#CC4,@#CCP
+S4:	MOV	@#CCP,R0
+	MOV	(R0)+,R1
+	BMI	S7
+	MOV	R0,@#CCP
+	BIS	#170340,R1
+	MOV	R1,@#PSWV
+	MOV	@#SVP,@#SVQ
+S5:	MOV	@#SVQ,R0		; pairs: R0 R1 R3-R5, R2
+	MOV	(R0)+,R1
+	BEQ	S4
+	MOV	(R0)+,@#R2V
+	MOV	R0,@#SVQ
+	MOV	R1,@#RSV
+	MOV	#S5,@#CONT
+	JMP	@#TESTU
+S6:	MOV	#W,@#XV
+	INC	@#SMD
+	CMP	@#SMD,#8.
+	BGE	1$
+	JMP	@#S3
+1$:	JMP	@#S2
+STAB:
+	.WORD	005000
+	.WORD	005100
+	.WORD	005200
+	.WORD	005300
+	.WORD	005400
+	.WORD	005500
+	.WORD	005600
+	.WORD	005700
+	.WORD	006000
+	.WORD	006100
+	.WORD	006200
+	.WORD	006300
+	.WORD	105000
+	.WORD	105100
+	.WORD	105200
+	.WORD	105300
+	.WORD	105400
+	.WORD	105500
+	.WORD	105600
+	.WORD	105700
+	.WORD	106000
+	.WORD	106100
+	.WORD	106200
+	.WORD	106300
+	.WORD	000300
+	.WORD	006700
+	.WORD	006500
+	.WORD	006600
+	.WORD	106400
+	.WORD	106700
+	.WORD	0
+NX	= A-W			; negative, even: X(R) and @X(R) reach A
+SRTAB:	.WORD	1,3,5,2,-1
+SMCLS:	.WORD	0,1,1,1,1,1,2,2		; mode -> class (words: listings carry no bytes)
+SVTAB:	.WORD	SV0,SV1,SV2,SV3,SV4,SV5
+SV0:	.WORD	A,B,A+1,B,NEG,B,100000,B,0	; odd register, mode 0 (data)
+SV1:	.WORD	A,B,0				; odd register, modes 1-5
+SV2:	.WORD	A,B,NX,B,0			; odd register, modes 6-7
+SV3:	.WORD	A,B,A,B+1,A,100000,A,177774,0	; R2, mode 0 (data)
+SV4:	.WORD	A,B,0				; R2, modes 1-5
+SV5:	.WORD	A,B,A,NX,0			; R2, modes 6-7
+XV1:	.WORD	W,0
+XV2:	.WORD	W,W+1,0		; W+1: odd index, still a TRAP
+XV:	.WORD	W
+XVP:	.WORD	0
+SRP:	.WORD	0
+SREG:	.WORD	0
+SOP:	.WORD	0
+SBASE:	.WORD	0
+SMD:	.WORD	0
+SVP:	.WORD	0
+SVQ:	.WORD	0
+	.ENDC
+
+; SWAB @-(PC)
+R0SKIP:	CMP	R0,#1
+	BEQ	1$
+	CMP	R0,#147
+	BEQ	1$
+	CMP	R0,#347
+	BEQ	1$
+	CMP	R0,#357			; SWAB @-(PC): loops if SWAB does not trap
+	BEQ	1$			; on an odd address
+	CLC
+	RTS	PC
+1$:	SEC
+	RTS	PC
+
+; ---- user mode: PSWV, R2V, IRV ------------------------------
+TESTU:	CMP	@#BFV,@#BFILL		; destination zone contents
+	BEQ	1$
+	MOV	@#BFV,@#BFILL
+	JSR	PC,@#BZSET
+1$:	MOV	#30340,@#PSW		; kernel, previous mode user
+	MOV	#KSTK,SP
+	MOV	#A,-(SP)
+	MTPI	SP
+	MOV	@#IRV,@#SLOT
+	.IF NE E62S
+	MOV	@#XV,@#SLOT+2		; first index word
+	.ENDC
+	MOV	@#RSV,R0
+	MOV	R0,R1
+	MOV	@#R2V,R2
+	MOV	R0,R3
+	MOV	R0,R4
+	MOV	R0,R5
+	MOV	@#PSWV,-(SP)
+	MOV	#SLOT,-(SP)
+	.IF NE MMU
+	MOV	@#MPDRV,@MPDRA		; page under test
+	MOV	@#MPARV,@MPARA
+	MOV	#1,@#SR0		; relocation on
+	.ENDC
+	RTI
+
+; ---- kernel mode: PSWV, R2V, IRV ----------------------------
+TESTK:	CMP	@#BFV,@#BFILL		; destination zone contents
+	BEQ	1$
+	MOV	@#BFV,@#BFILL
+	JSR	PC,@#BZSET
+1$:	MOV	#KSTK,SP
+	MOV	@#IRV,@#SLOT
+	MOV	@#RSV,R0
+	MOV	R0,R1
+	MOV	@#R2V,R2
+	MOV	R0,R3
+	MOV	R0,R4
+	MOV	R0,R5
+	MOV	@#PSWV,@#PSW
+	JMP	@#SLOT
+
+; ---- common handler: fold the results, restore memory, continue ---------
+HANDLR:	MOV	@#PSW,@#SREGS+14	; first: vector code in the CC bits
+	.IF NE MMU
+	MOV	@#SR0,@#SREGS+24	; frozen on an abort
+	MOV	@#SR2,@#SREGS+26
+	MOV	@MPDRA,@#SREGS+30	; PDR of the page under test (W bit)
+	CLR	@#SR0
+	MOV	#77406,@MPDRA		; back to the identity mapping
+	MOV	@#MPARD,@MPARA
+	.ENDC
+	MOV	R0,@#SREGS
+	MOV	R1,@#SREGS+2
+	MOV	R2,@#SREGS+4
+	MOV	R3,@#SREGS+6
+	MOV	R4,@#SREGS+10
+	MOV	R5,@#SREGS+12
+	MFPI	SP
+	MOV	(SP)+,@#SREGS+16	; SP of the previous mode
+	MOV	(SP)+,@#SREGS+20	; PC reached
+	MOV	(SP)+,@#SREGS+22	; PSW of the test
+	MOV	#MSTK,SP
+	MOV	#340,@#PSW
+	MOV	@#CK,R4			; Fletcher sums: R4 += v, R0 += R4
+	MOV	@#CK2,R0
+	MOV	#SREGS,R1
+	MOV	#NSREG,R2
+1$:	ADD	(R1)+,R4
+	ADD	R4,R0
+	SOB	R2,1$
+	MOV	#ZTAB,R3
+2$:	MOV	(R3)+,R1		; zone start
+	BEQ	5$
+	MOV	(R3)+,R2		; words
+	MOV	@(R3)+,R5		; fill value
+3$:	CMP	(R1),R5
+	BEQ	4$
+	ADD	R1,R4			; written: fold address and value
+	ADD	R4,R0
+	ADD	(R1),R4
+	ADD	R4,R0
+	MOV	R5,(R1)
+4$:	TST	(R1)+
+	SOB	R2,3$
+	BR	2$
+5$:	CMP	@#KSTK+2,#340
+	BEQ	6$
+	ADD	@#KSTK+2,R4
+	ADD	R4,R0
+	MOV	#340,@#KSTK+2
+6$:	MOV	R4,@#CK
+	MOV	R0,@#CK2
+	JSR	PC,@#POLL
+	.IF NE DBG
+	MOV	@#IRV,R1		; debug: IR, vector PSW, PC reached
+	JSR	PC,@#PUTO
+	MOV	#40,R0
+	JSR	PC,@#PUTC
+	MOV	@#SREGS+14,R1
+	JSR	PC,@#PUTO
+	MOV	#40,R0
+	JSR	PC,@#PUTC
+	MOV	@#SREGS+20,R1
+	JSR	PC,@#PUTO
+	.IF NE MMU
+	MOV	#40,R0
+	JSR	PC,@#PUTC
+	MOV	@#MPDRV,R1		; PDR tested, SR0, PDR after
+	JSR	PC,@#PUTO
+	MOV	#40,R0
+	JSR	PC,@#PUTC
+	MOV	@#SREGS+24,R1
+	JSR	PC,@#PUTO
+	MOV	#40,R0
+	JSR	PC,@#PUTC
+	MOV	@#SREGS+30,R1
+	JSR	PC,@#PUTO
+	MOV	#40,R0
+	JSR	PC,@#PUTC
+	MOV	@#SREGS+26,R1		; SR2
+	JSR	PC,@#PUTO
+	MOV	#40,R0
+	JSR	PC,@#PUTC
+	MOV	@#SREGS+4,R1		; R2 at the end
+	JSR	PC,@#PUTO
+	.ENDC
+	MOV	#15,R0
+	JSR	PC,@#PUTC
+	MOV	#12,R0
+	JSR	PC,@#PUTC
+	.ENDC
+	JMP	@CONT
+
+; ---- fill every zone once ----------------------------------------------
+FILL:	MOV	#FTAB,R3
+1$:	MOV	(R3)+,R1
+	BEQ	3$
+	MOV	(R3)+,R2
+	MOV	@(R3)+,R5
+2$:	MOV	R5,(R1)+
+	SOB	R2,2$
+	BR	1$
+3$:	MOV	#340,@#KSTK+2		; kernel RTI/RTT frame: PC W, PSW 340
+	RTS	PC
+
+; ---- refill the destination zones with BFILL ---------------------------
+BZSET:	MOV	#B-20,R1
+	MOV	#17.,R2
+1$:	MOV	@#BFILL,(R1)+
+	SOB	R2,1$
+	MOV	#B+W-20,R1
+	MOV	#17.,R2
+2$:	MOV	@#BFILL,(R1)+
+	SOB	R2,2$
+	RTS	PC
+
+; ---- block end: print start opcode and checksum ------------------------
+CHUNK:	MOV	R0,-(SP)
+	MOV	@#PFX,R0
+	JSR	PC,@#PUTC
+	MOV	@#CHST,R1
+	JSR	PC,@#PUTO
+	MOV	#40,R0
+	JSR	PC,@#PUTC
+	MOV	@#CK,R1
+	JSR	PC,@#PUTO
+	MOV	#40,R0
+	JSR	PC,@#PUTC
+	MOV	@#CK2,R1
+	JSR	PC,@#PUTO
+	MOV	#40,R0
+	JSR	PC,@#PUTC
+	MOV	@#TICKS,R1		; block duration in line clock ticks
+	JSR	PC,@#PUTO
+	MOV	#15,R0
+	JSR	PC,@#PUTC
+	MOV	#12,R0
+	JSR	PC,@#PUTC
+	MOV	@#V,@#CHST
+	CLR	@#CK
+	CLR	@#CK2
+	CLR	@#TICKS
+	MOV	(SP)+,R0
+	RTS	PC
+
+; ---- line clock: count 20 ms ticks by polling CLOCK MONITOR ------------
+POLL:	TST	@#HASCLK
+	BEQ	1$
+	TSTB	@#LKS
+	BPL	1$
+	INC	@#TICKS
+	CLR	@#LKS
+1$:	RTS	PC
+
+; ---- console ------------------------------------------------------------
+PUTC:	JSR	PC,@#POLL
+	TSTB	@#XCSR
+	BPL	PUTC
+	MOVB	R0,@#XBUF
+	RTS	PC
+PUTS:	MOVB	(R1)+,R0
+	BEQ	1$
+	JSR	PC,@#PUTC
+	BR	PUTS
+1$:	RTS	PC
+PUTO:	MOV	R2,-(SP)		; R1 in octal, 6 digits
+	CLR	R0
+	ASL	R1
+	ROL	R0
+	ADD	#60,R0
+	JSR	PC,@#PUTC
+	MOV	#5,R2
+1$:	CLR	R0
+	ASL	R1
+	ROL	R0
+	ASL	R1
+	ROL	R0
+	ASL	R1
+	ROL	R0
+	ADD	#60,R0
+	JSR	PC,@#PUTC
+	SOB	R2,1$
+	MOV	(SP)+,R2
+	RTS	PC
+
+; ---- tables -------------------------------------------------------------
+CC4:	.WORD	0,1,10,11,-1		; C, N
+CC16:	.WORD	0,1,2,3,4,5,6,7,10,11,12,13,14,15,16,17,-1
+; data variants: source registers, R2. 0 ends the list
+NEG	= 102041		; negative, odd: data only, never an address
+NEGO	= 112025
+; triplets: R0 R1 R3-R5, R2, destination zone contents
+DPOS	= A+1			; odd: word pointer traps, byte pointer stays
+DNEG	= W+1			; in a checked zone
+VLTAB:	.WORD	VL0,VL1,VL2,VL3,VL4,VL1,VL6,VL3,VL8
+VL0:	.WORD	A,B,WB,0
+VL1:	.WORD	A,B,WB,A,B+1,WB,A,NEGO,WB,0		; destination mode 0
+VL2:	.WORD	A,B,WB,NEG,B,WB,0			; source mode 0 (JSR)
+VL3:	.WORD	A,B,WB,A,B+1,WB,A,NEGO,WB,NEG,B,WB,NEG,NEGO,WB,0
+VL4:	.WORD	A,B,WB,A,B,A,A,B,DPOS,A,B,DNEG,0	; memory destination
+VL8:	.WORD	A,B,WB,A,B+1,WB,0			; source (R2) modes, R2 mode 0
+VL6:	.WORD	A,B,WB,A,B,A,A,B,DPOS,A,B,DNEG		; both
+	.WORD	NEG,B,WB,NEG,B,A,NEG,B,DPOS,NEG,B,DNEG,0
+; zones checked after every test: start, words, address of the fill value
+ZTAB:	.WORD	SLOT+2,5,WVAL		; words after the instruction
+	.WORD	A-20,17.,WVAL
+	.WORD	B-20,17.,BFILL
+	.WORD	WB-20,36.,WVAL		; W and WB as addresses
+	.WORD	A+W-20,17.,WVAL
+	.WORD	B+W-20,17.,BFILL
+	.WORD	SLOT+W-20,25.,WVAL
+	.WORD	KSTK-20,9.,WVAL
+	.WORD	KSTK+4,7,WVAL
+	.WORD	KSTK+W-20,17.,WVAL
+	.IF NE MMU
+	.WORD	REL1-20,17.,DRELV	; relocated page 2
+	.WORD	REL2-20,17.,DREL2V
+	.ENDC
+	.WORD	0
+; zones filled at start: the same, plus the branch landing area
+FTAB:	.WORD	SLOT-400,128.,WVAL
+	.WORD	SLOT+2,129.,WVAL
+	.WORD	A-20,17.,WVAL
+	.WORD	B-20,17.,BFILL
+	.WORD	WB-20,36.,WVAL		; W and WB as addresses
+	.WORD	A+W-20,17.,WVAL
+	.WORD	B+W-20,17.,BFILL
+	.WORD	SLOT+W-20,25.,WVAL
+	.WORD	KSTK-20,9.,WVAL
+	.WORD	KSTK+4,7,WVAL
+	.WORD	KSTK+W-20,17.,WVAL
+	.IF NE MMU
+	.WORD	REL1-20,17.,DRELV	; relocated page 2
+	.WORD	REL2-20,17.,DREL2V
+	.ENDC
+	.WORD	0
+HDR:	.WORD	005015,047503,043116,046522,005015,000000	; <CR><LF>CONFRM<CR><LF>
+ENDM:	.WORD	047105,006504,000012	; END<CR><LF>
+
+; ---- variables ----------------------------------------------------------
+PFX:	.WORD	0			; phase letter
+V:	.WORD	0			; opcode being swept
+CHST:	.WORD	0			; first opcode of the block
+CK:	.WORD	0			; block checksum (Fletcher, two words)
+CK2:	.WORD	0
+TICKS:	.WORD	0			; line clock ticks in the block
+HASCLK:	.WORD	0			; line clock present
+BRF:	.WORD	0			; branch flag
+IRV:	.WORD	0			; instruction under test
+PSWV:	.WORD	0			; PSW of the test
+R2V:	.WORD	0			; R2 of the test
+CCP:	.WORD	0			; condition code table pointer
+VLST:	.WORD	0			; data variant list
+VP:	.WORD	0			; data variant pointer
+RSV:	.WORD	0			; R0, R1, R3-R5 of the test
+BFV:	.WORD	WB			; destination zone contents wanted
+BFILL:	.WORD	WB			; destination zone contents now
+WVAL:	.WORD	W
+PB:	.WORD	0			; phase C: PSW base
+EP:	.WORD	0			; phase C: test entry
+CONT:	.WORD	0			; continuation after the handler
+SREGS:	.BLKW	NSREG			; R0-R5, vector PSW, SP, PC, PSW, (SR0, SR2, PDR)
+
+	.END	START

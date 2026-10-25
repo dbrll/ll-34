@@ -1,0 +1,16 @@
+# Configure the ll-34 logic analyzer for the datapath capture (E82 and
+# E87, the ALU and B register control, at the end of the AUX chain). Its
+# output must match the capture from the real hardware in
+# ../captures/datapath.
+
+add K2:E82:1, K2:E82:2, K2-8 ALU MODE H, K2:E82:4, K2:E82:5
+add K2-8 ALU CIN L, K2-8 BLEG 01 H, K2-8 BLEG 00 H
+add K2:E87:1, K2:E87:2, K2-8 BX MODE 01 L, K2-8 BX MODE 00 L
+add K1-5 PROC CLK L
+depth 131072
+pos 0
+rate 1
+trigger PC 1000
+arm
+export conformance/build/ll34-datapath.sr 50
+exit

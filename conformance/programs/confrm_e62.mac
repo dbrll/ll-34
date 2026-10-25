@@ -1,0 +1,8 @@
+; CONFRM_E62: Test single operand instructions with an odd destination
+; register.
+;
+; CONFRM, single operand phase only. Before the AUX step the B register
+; holds the instruction, and E62 sees its bit 0.
+
+E62S = 1
+	.INCLUDE /confrm.mac/

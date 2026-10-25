@@ -1,0 +1,14 @@
+# Configure the ll-34 logic analyzer for the E54 capture (PSW load and
+# T bit control). Its output must match the capture from the real hardware
+# in ../captures/traps.
+
+add K2:E53:5, K2:E53:7, K2:E53:4, K2:E53:3
+add K2:E54:7, K2:E54:1, K2:E54:15
+add K2-6 DISABLE LOAD PSW H, K2-6 ENAB TBIT H, K2-6 START RESET H
+add K2:E53:13
+depth 262144
+pos 0
+rate 1
+arm
+export conformance/build/ll34-E54.sr 50
+exit

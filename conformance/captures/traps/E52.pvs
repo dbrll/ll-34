@@ -1,0 +1,141 @@
+[General]
+decode_signals=0
+generated_signals=0
+meta_objs=0
+views=1
+
+[0]
+color=4279638298
+conv_options=0
+conversion_type=0
+enabled=true
+name=E52-5 \x2502 TBIT AND ENAB TBIT
+
+[1]
+color=4287582722
+conv_options=0
+conversion_type=0
+enabled=true
+name=E52-6 \x2502 BE
+
+[10]
+color=4279638298
+conv_options=0
+conversion_type=0
+enabled=true
+name=E52-14 \x2502 O1 \x2192 E51 A3
+
+[11]
+color=4287582722
+conv_options=0
+conversion_type=0
+enabled=true
+name=E52-13 \x2502 O2 \x2192 E51 A2
+
+[12]
+color=4291559424
+conv_options=0
+conversion_type=0
+enabled=true
+name=E52-12 \x2502 O3 \x2192 E51 A1
+
+[13]
+color=4294277376
+conv_options=0
+conversion_type=0
+enabled=true
+name=E52-11 \x2502 O4 \x2192 E51 A0
+
+[14]
+color=4293776384
+conv_options=0
+conversion_type=0
+enabled=false
+name=14
+
+[15]
+color=4285780502
+conv_options=0
+conversion_type=0
+enabled=true
+name=E52-8 \x2502 /CE (BUT SERVICE L)
+
+[2]
+color=4291559424
+conv_options=0
+conversion_type=0
+enabled=true
+name=E52-7  \x2502 STOV
+
+[3]
+color=4294277376
+conv_options=0
+conversion_type=0
+enabled=true
+name=E52-4 \x2502 PE
+
+[4]
+color=4293776384
+conv_options=0
+conversion_type=0
+enabled=true
+name=E52-3 \x2502 KTE
+
+[5]
+color=4285780502
+conv_options=0
+conversion_type=0
+enabled=true
+name=E52-2 \x2502 PFAIL
+
+[6]
+color=4281623972
+conv_options=0
+conversion_type=0
+enabled=true
+name=E52-1 \x2502 IR CODE 02 L
+
+[7]
+color=4285878395
+conv_options=0
+conversion_type=0
+enabled=true
+name=E52-17 \x2502 IR CODE 01 L
+
+[8]
+color=4287138437
+conv_options=0
+conversion_type=0
+enabled=true
+name=E52-16 \x2502 IR CODE 00 L
+
+[9]
+color=4293848812
+conv_options=0
+conversion_type=0
+enabled=true
+name=E52-15 \x2502 SERVICE BR PFAIL L
+
+[view0]
+0\trace_height=32
+1\trace_height=32
+10\trace_height=32
+11\trace_height=32
+12\trace_height=32
+13\trace_height=32
+14\trace_height=32
+15\trace_height=32
+2\trace_height=32
+3\trace_height=32
+4\trace_height=32
+5\trace_height=32
+6\trace_height=32
+7\trace_height=32
+8\trace_height=32
+9\trace_height=32
+offset=22 serialization::archive 17 0 0 0 0 3342290 89687604 94248214 15734232 48814440 62064827 -8 1 0 6
+scale=0.00010077258985555928
+segment_display_mode=1
+splitter_state=@ByteArray(\0\0\0\xff\0\0\0\x1\0\0\0\x2\0\0\0\xe4\0\0\a\xd4\x1\0\0\0\x1\x1\0\0\0\x1\0)
+v_offset=-74
+zero_offset=22 serialization::archive 17 0 0 0 0 0 0 0 0 0 0 0 0 0 6

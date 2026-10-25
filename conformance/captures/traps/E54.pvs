@@ -1,0 +1,141 @@
+[General]
+decode_signals=0
+generated_signals=0
+meta_objs=0
+views=1
+
+[0]
+color=4279638298
+conv_options=0
+conversion_type=0
+enabled=true
+name=E53-5 \x2502 IR00 \x2192 A0
+
+[1]
+color=4287582722
+conv_options=0
+conversion_type=0
+enabled=false
+name=ignoree
+
+[10]
+color=4279638298
+conv_options=0
+conversion_type=0
+enabled=true
+name=E54-9 \x2502 START RESET H
+
+[11]
+color=4287582722
+conv_options=0
+conversion_type=0
+enabled=false
+name=11
+
+[12]
+color=4291559424
+conv_options=0
+conversion_type=0
+enabled=true
+name=E53-13 \x2502 IR06 \x2192 A1
+
+[13]
+color=4294277376
+conv_options=0
+conversion_type=0
+enabled=false
+name=13
+
+[14]
+color=4293776384
+conv_options=0
+conversion_type=0
+enabled=false
+name=14
+
+[15]
+color=4285780502
+conv_options=0
+conversion_type=0
+enabled=false
+name=15
+
+[2]
+color=4291559424
+conv_options=0
+conversion_type=0
+enabled=true
+name=E53-7 \x2502 IR07 \x2192 A5
+
+[3]
+color=4294277376
+conv_options=0
+conversion_type=0
+enabled=true
+name=E53-4 \x2502 IR01 \x2192 A3
+
+[4]
+color=4293776384
+conv_options=0
+conversion_type=0
+enabled=true
+name=E53-3 \x2502 IR02 \x2192 A4
+
+[5]
+color=4285780502
+conv_options=0
+conversion_type=0
+enabled=true
+name=E54-7 \x2502 DM0 \x2192 A2
+
+[6]
+color=4281623972
+conv_options=0
+conversion_type=0
+enabled=true
+name=E54-1 \x2502 PSW15 L \x2192 A6
+
+[7]
+color=4285878395
+conv_options=0
+conversion_type=0
+enabled=true
+name=E54-15 \x2502 E85-6 \x2192 A7
+
+[8]
+color=4287138437
+conv_options=0
+conversion_type=0
+enabled=true
+name=E54-11 \x2502 DISABLE LOAD PSW H
+
+[9]
+color=4293848812
+conv_options=0
+conversion_type=0
+enabled=true
+name=E54-10 \x2502 ENAB TBIT H
+
+[view0]
+0\trace_height=26
+1\trace_height=26
+10\trace_height=26
+11\trace_height=26
+12\trace_height=26
+13\trace_height=26
+14\trace_height=26
+15\trace_height=26
+2\trace_height=26
+3\trace_height=26
+4\trace_height=26
+5\trace_height=26
+6\trace_height=26
+7\trace_height=26
+8\trace_height=26
+9\trace_height=26
+offset=22 serialization::archive 17 0 0 0 0 5326176 12901623 38496157 28161014 38307754 92376138 -8 0 0 6
+scale=2.8001505903728142e-05
+segment_display_mode=1
+splitter_state=@ByteArray(\0\0\0\xff\0\0\0\x1\0\0\0\x2\0\0\0\xf0\0\0\a\xc8\x1\0\0\0\x1\x1\0\0\0\x1\0)
+v_offset=-131
+zero_offset=22 serialization::archive 17 0 0 0 0 0 0 0 0 0 0 0 0 0 6

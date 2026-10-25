@@ -1,0 +1,17 @@
+# Configure the ll-34 logic analyzer for the MPC capture (next micro-
+# word address, at the end of the decode chain). Its output must match the
+# capture from the real hardware in ../captures/mpc.
+
+add K2-7 MPC 00 H, K2-7 MPC 01 H, K2-7 MPC 02 H, K2-7 MPC 03 H
+add K2-7 MPC 04 H, K2-7 MPC 05 H, K2-7 MPC 06 H, K2-7 MPC 07 H
+add K1-5 PROC CLK L, K2-9 BUT SERVICE (1) H
+add K2-9 SPA DST SEL 0 (1) H, K2-9 SPA DST SEL 1 (1) H
+add K2:E97:14, K2:E97:13
+add K2-7 MPC 08 H
+depth 131072
+pos 0
+rate 1
+trigger PC 1000
+arm
+export conformance/build/ll34-mpc.sr 50
+exit

@@ -1,0 +1,14 @@
+# Configure the ll-34 logic analyzer for the E80 capture (byte and bus
+# write control). Its output must match the capture from the real hardware
+# in ../captures/traps.
+
+add K2:E80:5, K2:E80:7, K2:E80:4, K2:E80:3
+add K2:E80:2, K2-8 SWAP H, K2:E80:15
+add K2-8 DISABLE UPPER BYTE WRITE H, K2-8 DISAB MSYN L, K2-8 SEX H
+add K2:E80:6
+depth 262144
+pos 0
+rate 1
+arm
+export conformance/build/ll34-E80.sr 50
+exit

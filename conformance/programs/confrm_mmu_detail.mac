@@ -1,0 +1,12 @@
+; CONFRM_MMU_DETAIL: CONFRM_MMU, one line per read-only test.
+;
+; Page 2 is read-only and mapped to itself. Used to find which test
+; differs when a CONFRM_MMU block does not match.
+
+MMU = 1
+B = 042104
+DBG = 1
+MACF0 = 1
+MACF1 = 2
+MONE = 1
+	.INCLUDE /confrm.mac/

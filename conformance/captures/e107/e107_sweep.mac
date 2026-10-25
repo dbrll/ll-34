@@ -1,0 +1,97 @@
+; E107: Sweep for the logic analyzer capture of E107, the condition code
+; ROM. Start at 1000.
+        .asect
+.=1000
+START:
+        .word 000240
+        .word 005037
+        .word 001200
+        .word 012704
+        .word 001210
+        .word 012705
+        .word 001210
+        .word 012703
+        .word 001240
+        .word 012337
+        .word 001044
+        .word 011400
+        .word 011501
+        .word 013737
+        .word 001200
+        .word 001202
+        .word 006037
+        .word 001202
+        .word 000000
+        .word 005713
+        .word 001364
+        .word 062705
+        .word 000002
+        .word 020527
+        .word 001230
+        .word 103755
+        .word 062704
+        .word 000002
+        .word 020427
+        .word 001230
+        .word 103746
+        .word 005237
+        .word 001200
+        .word 023727
+        .word 001200
+        .word 000002
+        .word 103736
+        .word 000137
+        .word 001000
+.=1200
+        .word 000000
+        .word 000000
+.=1210
+        .word 000000
+        .word 000001
+        .word 077777
+        .word 100000
+        .word 177777
+        .word 000177
+        .word 000200
+        .word 125125
+.=1240
+        .word 005000
+        .word 005100
+        .word 005200
+        .word 005300
+        .word 005400
+        .word 005500
+        .word 005600
+        .word 005700
+        .word 006000
+        .word 006100
+        .word 006200
+        .word 006300
+        .word 006700
+        .word 000300
+        .word 105000
+        .word 105100
+        .word 105200
+        .word 105300
+        .word 105400
+        .word 105500
+        .word 105600
+        .word 105700
+        .word 106000
+        .word 106100
+        .word 106200
+        .word 106300
+        .word 010001
+        .word 020001
+        .word 030001
+        .word 040001
+        .word 050001
+        .word 060001
+        .word 160001
+        .word 074001
+        .word 120001
+        .word 130001
+        .word 140001
+        .word 150001
+        .word 000000
+        .END    START

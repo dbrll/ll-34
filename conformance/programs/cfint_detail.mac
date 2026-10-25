@@ -1,0 +1,6 @@
+; CFINT_DETAIL: CFINT, one line per scenario.
+;
+; Used to find which scenario differs when a CFINT block does not match.
+
+DBG = 1
+	.INCLUDE /cfint.mac/

@@ -1,0 +1,10 @@
+; CONFRM_MMU: Test memory management conformity.
+;
+; CONFRM with memory management enabled. Every access control field, page
+; lengths around the address used, both expansion directions and three
+; relocations, on 102 instructions and on the instruction fetch page. The
+; checksum also covers SR0, SR2 and the PDR of the page.
+
+MMU = 1
+B = 042104
+	.INCLUDE /confrm.mac/

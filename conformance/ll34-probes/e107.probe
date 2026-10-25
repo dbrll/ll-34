@@ -1,0 +1,17 @@
+# Configure the ll-34 logic analyzer for the E107 capture (condition
+# code ROM, at the end of the condition code chain). Its output must match
+# the capture from the real hardware in ../captures/e107.
+
+add K2-5 CC CODE 00 H, K2-5 CC CODE 01 H, K2-5 CC CODE 02 H
+add K1-1 C BIT (1) H
+add K2-5 ROT CBIT (1) H
+add K1:E107:2, K1:E107:1
+add K1-10 CC N H, K1-10 CC V H, K1-10 CC C H
+add K1-1 PSW CLK H
+depth 262144
+pos 0
+rate 1
+trigger PC 1000
+arm
+export conformance/build/ll34-e107.sr 50
+exit

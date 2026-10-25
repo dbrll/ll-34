@@ -1,0 +1,141 @@
+[General]
+decode_signals=0
+generated_signals=0
+meta_objs=0
+views=1
+
+[0]
+color=4279638298
+conv_options=0
+conversion_type=0
+enabled=true
+name=E53-5 \x2502 IR00
+
+[1]
+color=4287582722
+conv_options=0
+conversion_type=0
+enabled=true
+name=E53-6 \x2502 IR05
+
+[10]
+color=4279638298
+conv_options=0
+conversion_type=0
+enabled=true
+name=E53-1 \x2502 IR04
+
+[11]
+color=4287582722
+conv_options=0
+conversion_type=0
+enabled=true
+name=E53-12 \x2502 HALT RQST L
+
+[12]
+color=4291559424
+conv_options=0
+conversion_type=0
+enabled=true
+name=E53-13 \x2502 /CE (IR06)
+
+[13]
+color=4294277376
+conv_options=0
+conversion_type=0
+enabled=true
+name=E53-14 \x2502 /CE (E85 network)
+
+[14]
+color=4293776384
+conv_options=0
+conversion_type=0
+enabled=false
+name=14
+
+[15]
+color=4285780502
+conv_options=0
+conversion_type=0
+enabled=true
+name=E52-8
+
+[2]
+color=4291559424
+conv_options=0
+conversion_type=0
+enabled=true
+name=E53-7 \x2502 IR07
+
+[3]
+color=4294277376
+conv_options=0
+conversion_type=0
+enabled=true
+name=E53-4 \x2502 IR01
+
+[4]
+color=4293776384
+conv_options=0
+conversion_type=0
+enabled=true
+name=E53-3 \x2502 IR02
+
+[5]
+color=4285780502
+conv_options=0
+conversion_type=0
+enabled=true
+name=E53-2 \x2502 IR03
+
+[6]
+color=4281623972
+conv_options=0
+conversion_type=0
+enabled=true
+name=E52-1 \x2502 IR CODE 02 L
+
+[7]
+color=4285878395
+conv_options=0
+conversion_type=0
+enabled=true
+name=E52-17 \x2502 IR CODE 01 L
+
+[8]
+color=4287138437
+conv_options=0
+conversion_type=0
+enabled=true
+name=E52-16 \x2502 IR CODE 00 L
+
+[9]
+color=4293848812
+conv_options=0
+conversion_type=0
+enabled=true
+name=E53-15 \x2502 USER MODE H
+
+[view0]
+0\trace_height=26
+1\trace_height=26
+10\trace_height=26
+11\trace_height=26
+12\trace_height=26
+13\trace_height=26
+14\trace_height=26
+15\trace_height=26
+2\trace_height=26
+3\trace_height=26
+4\trace_height=26
+5\trace_height=26
+6\trace_height=26
+7\trace_height=26
+8\trace_height=26
+9\trace_height=26
+offset=22 serialization::archive 17 0 0 0 0 144776 98359242 5990003 27036121 4946220 42223643 -8 1 0 6
+scale=6.5580650623365763e-05
+segment_display_mode=1
+splitter_state=@ByteArray(\0\0\0\xff\0\0\0\x1\0\0\0\x2\0\0\0\xd8\0\0\a\xe0\x1\0\0\0\x1\x1\0\0\0\x1\0)
+v_offset=-131
+zero_offset=22 serialization::archive 17 0 0 0 0 0 0 0 0 0 0 0 0 0 6

@@ -1,0 +1,381 @@
+	.TITLE	CFINT
+;
+; CFINT: Test traps and interrupts conformity.
+;
+; Runs 1280 scenarios, each one instruction that causes a trap or an
+; interrupt, and prints a checksum of what happened: the vector taken,
+; the PC and PSW pushed and the MMU status (SR0).
+;
+	.IIF NDF DBG, DBG = 0		; 1: one line per scenario
+W	= 104512		; TRAP 112, fill word
+A	= 020040		; registers, user SP
+KSTK	= 030060		; kernel stack
+SLOT	= 010016		; the scenario code
+MSTK	= 000776
+LOWSP	= 000376		; kernel SP of the stack overflow scenario
+PSW	= 177776
+RCSR	= 177560
+XCSR	= 177564
+XBUF	= 177566
+LKS	= 177546
+SR0	= 177572
+UPDR	= 177600
+UPAR	= 177640
+KPDR	= 172300
+KPAR	= 172340
+MAXEV	= 8.			; events logged per scenario
+
+	.ASECT
+	.=1000
+START:	MOV	#MSTK,SP
+	MOV	#340,@#PSW
+	CLR	@#RCSR
+	CLR	@#XCSR
+	CLR	@#HASCLK		; line clock present?
+	MOV	#NOCLK,@#4
+	MOV	#340,@#6
+	CLR	@#LKS
+	INC	@#HASCLK
+	BR	CLKOK
+NOCLK:	CMP	(SP)+,(SP)+		; bus error on the clock address
+CLKOK:	MOV	#MSTK,SP
+	MOV	#340,@#PSW
+	JSR	PC,@#MMUINI
+	MOV	#HDR,R1
+	JSR	PC,@#PUTS
+
+; ---- scenario loops: mode, T bit, sources (one block), priority, instr ---
+	CLR	@#SMODE
+L1:	CLR	@#ST
+L2:	CLR	@#SSRC
+L3:	MOV	@#SMODE,R1		; block code: mode*1000 + T*100 + sources
+	ASH	#9.,R1
+	MOV	@#ST,R2
+	ASH	#6,R2
+	ADD	R2,R1
+	ADD	@#SSRC,R1
+	MOV	R1,@#CHST
+	CLR	@#CK
+	CLR	@#CK2
+	CLR	@#SPRI
+L4:	MOV	#ITAB,@#SIP
+L5:	MOV	@#SIP,R0
+	MOV	(R0)+,R1
+	BEQ	L5END
+	MOV	R0,@#SIP
+	MOV	R1,@#SIR
+	JMP	@#RUNSC			; returns to L5 through SCEND
+L5END:	INC	@#SPRI
+	CMP	@#SPRI,#8.
+	BLT	L4
+	JSR	PC,@#CHUNK
+	INC	@#SSRC
+	CMP	@#SSRC,#4
+	BLT	L3
+	INC	@#ST
+	CMP	@#ST,#2
+	BLT	L2
+	INC	@#SMODE
+	CMP	@#SMODE,#2
+	BLT	L1
+	MOV	#ENDM,R1
+	JSR	PC,@#PUTS
+	JMP	@#START
+
+; ---- one scenario --------------------------------------------------------
+RUNSC:	MOV	#MSTK,SP
+	MOV	#340,@#PSW
+	CMP	@#SIR,#1		; WAIT only with an unmasked source armed
+	BNE	3$
+	MOV	@#SSRC,R0
+	TST	@#HASCLK
+	BNE	2$
+	BIC	#2,R0			; no clock: only the transmitter counts
+2$:	TST	R0
+	BEQ	SKIP
+	MOV	#6,R1			; highest armed level
+	BIT	#2,R0
+	BNE	1$
+	MOV	#4,R1
+1$:	CMP	@#SPRI,R1
+	BHIS	SKIP
+3$:	JSR	PC,@#VECSET
+	MOV	#LOG,@#LOGP
+	CLR	@#NEV
+	CLR	@#SR0
+	MOV	@#SIR,@#SLOT		; [instruction][NOP][EMT 377]
+	MOV	#240,@#SLOT+2
+	MOV	#104377,@#SLOT+4
+	MOV	#W,@#SLOT+6
+	MOV	#W,@#SLOT+10
+	MOV	@#SSRC,R0		; known source state
+	BIT	#1,R0
+	BEQ	4$
+5$:	TSTB	@#XCSR			; transmitter ready
+	BPL	5$
+4$:	BIT	#2,R0
+	BEQ	6$
+	TST	@#HASCLK
+	BEQ	6$
+	CLR	@#LKS			; wait for a fresh tick: the next one
+7$:	TSTB	@#LKS			; is 20 ms away
+	BPL	7$
+6$:	BIT	#1,R0			; arm, still at priority 7
+	BEQ	8$
+	BIS	#100,@#XCSR
+8$:	BIT	#2,R0
+	BEQ	9$
+	TST	@#HASCLK
+	BEQ	9$
+	BIS	#100,@#LKS
+9$:	MOV	#30340,@#PSW		; previous mode user, for MTPI
+	MOV	#A,-(SP)
+	MTPI	SP
+	MOV	@#SPRI,R0		; scenario PSW
+	SWAB	R0
+	ASR	R0
+	ASR	R0
+	ASR	R0			; priority << 5
+	TST	@#ST
+	BEQ	11$
+	BIS	#20,R0			; T bit
+11$:	TST	@#SMODE
+	BEQ	12$
+	BIS	#170000,R0		; user mode, previous user
+12$:	MOV	#KSTK,R1		; RTI frame written without pushes, so
+	CMP	@#SIR,#10046		; that a low kernel SP raises no stack
+	BNE	14$			; overflow before the scenario
+	TST	@#SMODE
+	BNE	14$
+	MOV	#LOWSP,R1
+14$:	MOV	R0,-2(R1)
+	MOV	#SLOT,-4(R1)
+	SUB	#4,R1
+	MOV	R1,SP
+	MOV	#A,R0			; registers
+	MOV	R0,R1
+	MOV	R0,R2
+	MOV	#A+1,R3			; odd address for the bus error scenario
+	MOV	#140000,R4		; page 6: non-resident for the user
+	MOV	R0,R5
+	CMP	@#SIR,#11401		; MMU scenario: relocation on
+	BNE	13$
+	MOV	#1,@#SR0
+13$:	RTI
+
+SKIP:	JMP	@#L5
+
+; ---- event handler: every vector, priority 7 --------
+EVH:	MOV	@#PSW,@#ECODE		; first: vector code
+	MOV	R0,@#SVR0
+	MOV	@#LOGP,R0
+	MOV	@#ECODE,(R0)
+	BIC	#177760,(R0)+		; vector code
+	MOV	(SP),(R0)+		; PC
+	MOV	2(SP),(R0)+		; PSW
+	MOV	@#SR0,(R0)+		; SR0 (MMU)
+	MOV	R0,@#LOGP
+	INC	@#NEV
+	MOV	@#ECODE,R0
+	BIC	#177760,R0
+	CMP	R0,#VC.TX		; disarm interrupt sources
+	BNE	1$
+	BIC	#100,@#XCSR
+1$:	CMP	R0,#VC.CLK
+	BNE	2$
+	CLR	@#LKS
+2$:	CMP	R0,#VC.MMU
+	BNE	3$
+	CLR	@#SR0
+3$:	CMP	R0,#VC.EMT		; end: EMT 377 at SLOT+4
+	BNE	4$
+	CMP	(SP),#SLOT+6
+	BEQ	SCEND
+4$:	CMP	@#NEV,#MAXEV
+	BHIS	SCEND
+	MOV	@#SVR0,R0
+	RTT				; T trap after the next instruction
+
+SCEND:	MOV	#MSTK,SP		; fold the scenario into the sums
+	MOV	#340,@#PSW
+	CLR	@#SR0
+	BIC	#100,@#XCSR
+	TST	@#HASCLK
+	BEQ	1$
+	CLR	@#LKS
+1$:	MOV	@#CK,R4
+	MOV	@#CK2,R5
+	MOV	@#NEV,R2
+	ADD	R2,R4
+	ADD	R4,R5
+	ASL	R2
+	ASL	R2			; 4 words per event
+	BEQ	3$
+	MOV	#LOG,R1
+2$:	ADD	(R1)+,R4
+	ADD	R4,R5
+	SOB	R2,2$
+3$:	MOV	R4,@#CK
+	MOV	R5,@#CK2
+	.IF NE DBG
+	JSR	PC,@#DETAIL
+	.ENDC
+	JMP	@#L5
+
+	.IF NE DBG
+; output line: mode T sources priority instruction, then code/PC/PSW/SR0
+DETAIL:	MOV	@#CHST,R1
+	JSR	PC,@#PUTO
+	JSR	PC,@#SPACE
+	MOV	@#SPRI,R1
+	JSR	PC,@#PUTO
+	JSR	PC,@#SPACE
+	MOV	@#SIR,R1
+	JSR	PC,@#PUTO
+	MOV	@#NEV,R2
+	BEQ	2$
+	MOV	#LOG,R3
+1$:	MOV	#4,R4
+5$:	JSR	PC,@#SPACE
+	MOV	(R3)+,R1
+	JSR	PC,@#PUTO
+	SOB	R4,5$
+	SOB	R2,1$
+2$:	JMP	@#CRLF
+	.ENDC
+
+; ---- vectors: all to EVH, PSW 340 + code ---------------------------------
+VECSET:	CLR	R0
+1$:	MOV	#EVH,(R0)+
+	MOV	#340,(R0)+
+	CMP	R0,#400
+	BLO	1$
+	MOV	#VTAB,R1
+2$:	MOV	(R1)+,R0		; vector address, code
+	BEQ	3$
+	BIS	(R1)+,2(R0)
+	BR	2$
+3$:	RTS	PC
+VC.BE	= 1
+VC.ILL	= 2
+VC.BPT	= 3
+VC.IOT	= 4
+VC.PF	= 5
+VC.EMT	= 6
+VC.TRP	= 7
+VC.TX	= 10
+VC.RX	= 11
+VC.CLK	= 12
+VC.PAR	= 13
+VC.MMU	= 14
+VTAB:	.WORD	4,VC.BE,10,VC.ILL,14,VC.BPT,20,VC.IOT,24,VC.PF
+	.WORD	30,VC.EMT,34,VC.TRP,64,VC.TX,60,VC.RX,100,VC.CLK
+	.WORD	114,VC.PAR,250,VC.MMU,0
+
+; ---- MMU: kernel identity, user identity with page 6 and 7 non-resident --
+MMUINI:	MOV	#KPAR,R0
+	CLR	R1
+	MOV	#8.,R2
+1$:	MOV	R1,(R0)+
+	ADD	#200,R1
+	SOB	R2,1$
+	MOV	#7600,@#KPAR+16
+	MOV	#KPDR,R0
+	MOV	#8.,R2
+2$:	MOV	#77406,(R0)+
+	SOB	R2,2$
+	MOV	#UPAR,R0
+	CLR	R1
+	MOV	#8.,R2
+3$:	MOV	R1,(R0)+
+	ADD	#200,R1
+	SOB	R2,3$
+	MOV	#UPDR,R0
+	MOV	#6,R2
+4$:	MOV	#77406,(R0)+
+	SOB	R2,4$
+	CLR	(R0)+
+	CLR	(R0)
+	CLR	@#SR0
+	RTS	PC
+
+; ---- block line: code, sums, ticks ----------------------------------------
+CHUNK:	MOV	@#CHST,R1
+	JSR	PC,@#PUTO
+	JSR	PC,@#SPACE
+	MOV	@#CK,R1
+	JSR	PC,@#PUTO
+	JSR	PC,@#SPACE
+	MOV	@#CK2,R1
+	JSR	PC,@#PUTO
+	JMP	@#CRLF
+
+; ---- console ----------------------------------------------------------------
+CRLF:	MOV	#15,R0
+	JSR	PC,@#PUTC
+	MOV	#12,R0
+	JMP	@#PUTC
+SPACE:	MOV	#40,R0
+PUTC:	TSTB	@#XCSR
+	BPL	PUTC
+	MOVB	R0,@#XBUF
+	RTS	PC
+PUTS:	MOVB	(R1)+,R0
+	BEQ	1$
+	JSR	PC,@#PUTC
+	BR	PUTS
+1$:	RTS	PC
+PUTO:	MOV	R2,-(SP)
+	CLR	R0
+	ASL	R1
+	ROL	R0
+	ADD	#60,R0
+	JSR	PC,@#PUTC
+	MOV	#5,R2
+1$:	CLR	R0
+	ASL	R1
+	ROL	R0
+	ASL	R1
+	ROL	R0
+	ASL	R1
+	ROL	R0
+	ADD	#60,R0
+	JSR	PC,@#PUTC
+	SOB	R2,1$
+	MOV	(SP)+,R2
+	RTS	PC
+
+; ---- instructions: one event each ------------------------------------------
+ITAB:	.WORD	000240			; NOP
+	.WORD	104400			; TRAP 0
+	.WORD	104001			; EMT 1
+	.WORD	000004			; IOT
+	.WORD	000003			; BPT
+	.WORD	000100			; JMP R0: illegal
+	.WORD	000007			; reserved
+	.WORD	011301			; MOV (R3),R1, R3 odd: bus error
+	.WORD	010046			; MOV R0,-(SP): stack overflow in kernel mode
+	.WORD	011401			; MOV (R4),R1: MMU abort in user mode
+	.WORD	0
+
+HDR:	.WORD	005015,043103,047111,006524,000012	; <CR><LF>CFINT<CR><LF>
+ENDM:	.WORD	047105,006504,000012			; END<CR><LF>
+
+; ---- variables ----------------------------------------------------------
+HASCLK:	.WORD	0
+SMODE:	.WORD	0			; 0 kernel, 1 user
+ST:	.WORD	0			; T bit
+SSRC:	.WORD	0			; 1 transmitter, 2 clock
+SPRI:	.WORD	0			; CPU priority
+SIP:	.WORD	0
+SIR:	.WORD	0			; instruction
+CHST:	.WORD	0
+CK:	.WORD	0
+CK2:	.WORD	0
+ECODE:	.WORD	0
+SVR0:	.WORD	0
+NEV:	.WORD	0
+LOGP:	.WORD	0
+LOG:	.BLKW	4*MAXEV
+
+	.END	START
