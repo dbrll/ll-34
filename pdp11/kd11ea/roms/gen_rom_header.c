@@ -20,7 +20,7 @@ typedef struct RomImage {
 } RomImage;
 
 #define PRIMARY(ref) \
-    { "M8266", ref, 512, 4, "m8266_e" #ref "_ucode_rom", "M8266 primary microcode, MPC09=0 bank" }
+    { "M8266", ref, 1024, 4, "m8266_e" #ref "_ucode_rom", "M8266 primary microcode (82S137)" }
 #define COMBO(board, ref, size, width) \
     { board, ref, size, width, "e" #ref "_rom", board " combinatorial ROMs" }
 #define M8265_COMBO(ref, size, width) \

@@ -75,6 +75,7 @@
 #define RK_SECT_PER_DRIVE  (RK_NUMCY * RK_NUMSF * RK_NUMSC)
 
 typedef struct {
+    uint8_t init_l;    /* received BUS INIT L */
     uint16_t rkds, rker, rkcs, rkwc, rkba, rkda;
     FILE    *disk[RK_NUMDR];
     int      read_only[RK_NUMDR];

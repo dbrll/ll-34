@@ -37,16 +37,24 @@ void mmu_init(MMU *mmu) {
     memset(mmu, 0, sizeof(*mmu));
 }
 
+void mmu_bus_init(void *dev, int init_l) {
+    MMU *mmu = dev;
+    /* MP00190 K1-8: RCD INIT L clears E100 (relocate enable),
+     * E103 (maintenance/error) and E73 (mode/page). No PAR/PDR clear. */
+    if (!init_l) mmu->sr0 = 0;
+}
+
 
 /* PBA = ((PAF + block) << 6) | displacement. */
 
-int mmu_translate(MMU *mmu, uint16_t vba, int mode, int access,
+int mmu_translate(MMU *mmu, uint16_t vba, int mode, int bus, int relocate,
                   uint16_t pc, uint32_t *pba_out)
 {
     (void)pc;  /* used only by trace() */
 
     /* MMU disabled: pass-through, I/O page shortcut via E121 (K1-6) */
-    if (!(mmu->sr0 & SR0_ENABLE)) {
+    mmu->page = -1;
+    if (!relocate) {
         if ((vba & 0xE000) == 0xE000)
             *pba_out = 0x30000 | (uint32_t)vba;
         else
@@ -60,6 +68,11 @@ int mmu_translate(MMU *mmu, uint16_t vba, int mode, int access,
 
     int idx = (mode == 3 ? 8 : 0) + page;
 
+    /* SR0 6:1 follow every relocated reference until an abort freezes
+     * them (K1-8 E73) */
+    if (!(mmu->sr0 & SR0_ABORT_MASK))
+        mmu->sr0 = (uint16_t)((mmu->sr0 & ~0x007e) | ((mode & 3) << 5) | (page << 1));
+
     uint16_t par = mmu->par[idx];
     uint16_t pdr = mmu->pdr[idx];
     int paf = par & 0x0FFF;
@@ -68,10 +81,16 @@ int mmu_translate(MMU *mmu, uint16_t vba, int mode, int access,
     int ed  = (pdr & PDR_ED) ? 1 : 0;
 
 
+    mmu->page = (int8_t)idx;
+    mmu->mode = (uint8_t)mode;
+    *pba_out = ((uint32_t)((paf + block) & 0x1FFF) << 6 | disp) & 0x3FFFF;
+    if (bus == MMU_MAP)
+        return 0;
+
     int compare = block > plf || (ed && block == plf);
     int illegal_mode = ((mode >> 1) ^ mode) & 1;
     uint8_t e83 = m8265_e83_rom[m8265_e83_addr(
-        access ? 1 : 0, 0, 1, illegal_mode, acf, compare, ed)];
+        (bus >> 1) & 1, bus & 1, 1, illegal_mode, acf, compare, ed)];
     uint16_t aborts = 0;
 
     if (M8265_E83_NR(e83))
@@ -84,18 +103,12 @@ int mmu_translate(MMU *mmu, uint16_t vba, int mode, int access,
     if (aborts) {
         /* SR0 keeps flags from the fault. */
         if (!(mmu->sr0 & SR0_ABORT_MASK))
-            mmu->sr0 |= aborts | ((mode & 3) << 5) | (page << 1);
+            mmu->sr0 = (uint16_t)((mmu->sr0 & ~0x007e) | aborts |
+                                  ((mode & 3) << 5) | (page << 1));
         trace("[MMU] ABORT: VBA=%06o page=%d mode=%d acf=%d flags=%06o PC=%06o\n",
               vba, page, mode, acf, aborts, pc);
         return -1;
     }
-
-    if (access)
-        mmu->pdr[idx] |= PDR_W;
-
-    uint32_t pba = ((uint32_t)((paf + block) & 0x1FFF) << 6 | disp) & 0x3FFFF;
-
-    *pba_out = pba;
     return 0;
 }
 
@@ -126,6 +139,24 @@ int mmu_read(void *dev, uint32_t addr, uint16_t *data)
     return 0;
 }
 
+/* Byte lanes loaded by the LOAD ... LOW / HIGH L strobes */
+static uint16_t lanes(uint16_t old, uint16_t data, int low_l, int high_l)
+{
+    uint16_t mask = (low_l ? 0 : 0x00ff) | (high_l ? 0 : 0xff00);
+    return (uint16_t)((old & ~mask) | (data & mask));
+}
+
+/* A write to SR0, a PAR or a PDR (K1-10 E75/E77 load strobes). Such
+ * writes do not set the W bit (FKTHB0 test 32), a PSW write does. */
+int mmu_kt_write(uint32_t pba, int c0)
+{
+    uint8_t e75 = read_e74_e75(pba & 0x3ffff, 1, c0, 0);
+    uint8_t e77 = read_e76_e77(pba & 0x3ffff, 1, c0, 0);
+    return !M8265_E75_LOAD_SR0_LOW_L(e75) || !M8265_E75_LOAD_SR0_HIGH_L(e75) ||
+           !M8265_E77_LOAD_PAR_LOW_L(e77) || !M8265_E77_LOAD_PAR_HIGH_L(e77) ||
+           !M8265_E77_LOAD_PDR_LOW_L(e77) || !M8265_E77_LOAD_PDR_HIGH_L(e77);
+}
+
 int mmu_write(void *dev, uint32_t addr, uint16_t data, int is_byte)
 {
     MMU *mmu = (MMU *)dev;
@@ -138,7 +169,8 @@ int mmu_write(void *dev, uint32_t addr, uint16_t data, int is_byte)
     if (!M8265_E77_LOAD_PAR_HIGH_L(d) ||
         !M8265_E77_LOAD_PAR_LOW_L(d)) {
         unsigned idx = apr_index(addr);
-        mmu->par[idx] = data & 0x0fff;
+        mmu->par[idx] = lanes(mmu->par[idx], data, M8265_E77_LOAD_PAR_LOW_L(d),
+                              M8265_E77_LOAD_PAR_HIGH_L(d)) & 0x0fff;
         trace("[MMU] %cPAR%u <- %06o\n", idx < 8 ? 'K' : 'U',
               idx & 7, mmu->par[idx]);
         return 0;
@@ -146,7 +178,9 @@ int mmu_write(void *dev, uint32_t addr, uint16_t data, int is_byte)
     if (!M8265_E77_LOAD_PDR_HIGH_L(d) ||
         !M8265_E77_LOAD_PDR_LOW_L(d)) {
         unsigned idx = apr_index(addr);
-        mmu->pdr[idx] = data & PDR_WR_MASK;
+        /* W is set by a write through the page, cleared by a PDR write */
+        mmu->pdr[idx] = lanes(mmu->pdr[idx], data, M8265_E77_LOAD_PDR_LOW_L(d),
+                              M8265_E77_LOAD_PDR_HIGH_L(d)) & PDR_WR_MASK & ~PDR_W;
         trace("[MMU] %cPDR%u <- %06o (ACF=%d ED=%d PLF=%03o)\n",
               idx < 8 ? 'K' : 'U', idx & 7, mmu->pdr[idx],
               (mmu->pdr[idx] >> 1) & 3, (mmu->pdr[idx] >> 3) & 1,
@@ -158,7 +192,9 @@ int mmu_write(void *dev, uint32_t addr, uint16_t data, int is_byte)
     if (!M8265_E75_LOAD_SR0_HIGH_L(d) ||
         !M8265_E75_LOAD_SR0_LOW_L(d)) {
         uint16_t writable = 0xe101; /* bits 15:13 + 8 + 0 */
-        mmu->sr0 = (mmu->sr0 & ~writable) | (data & writable);
+        uint16_t v = lanes(mmu->sr0, data, M8265_E75_LOAD_SR0_LOW_L(d),
+                           M8265_E75_LOAD_SR0_HIGH_L(d));
+        mmu->sr0 = (mmu->sr0 & ~writable) | (v & writable);
         trace("[MMU] SR0 <- %06o (MMU %s)\n", mmu->sr0,
               (mmu->sr0 & SR0_ENABLE) ? "ON" : "OFF");
     }

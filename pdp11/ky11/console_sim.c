@@ -93,6 +93,8 @@ static void key_lad(Console *con, ConsoleSim *s)
 {
     s->addr_ptr = s->temporary;
     s->temporary = 0;
+    s->flag_exam = 0;           /* the next EXAM or DEP uses this address */
+    s->flag_dep = 0;
     con->display = 0;
     clear_indicators(con);
 }

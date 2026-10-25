@@ -292,6 +292,7 @@ static int rl11_read(void *dev, uint32_t addr, uint16_t *data) {
 static int rl11_write(void *dev, uint32_t addr, uint16_t data, int is_byte) {
     RL11 *rl = (RL11 *)dev;
     int reg = (addr >> 1) & 3;
+    if (!rl->init_l) return 0;
 
     if (is_byte) {
         uint16_t cur = 0;
@@ -331,6 +332,7 @@ static int rl11_write(void *dev, uint32_t addr, uint16_t data, int is_byte) {
 
 void rl11_init(RL11 *rl) {
     memset(rl, 0, sizeof(*rl));
+    rl->init_l = 1;
     rl->rlcs = RLCS_CRDY;
 }
 
@@ -368,7 +370,22 @@ detect:
     return 0;
 }
 
+/* BUS INIT: clear CSR, BA, DA, set CRDY, drives are not reset
+ * (EK-ORL11-TD-001 3.2.4.1) */
+static void rl11_bus_init(void *dev, int init_l) {
+    RL11 *rl = dev;
+    rl->init_l = (uint8_t)init_l;
+    if (init_l) return;
+    rl->rlcs = RLCS_CRDY;
+    if (rl->disk[0]) rl->rlcs |= RLCS_DRDY;
+    if (rl->stat[0] & RLDS_ERR) rl->rlcs |= RLCS_DRE | RLCS_ERR;
+    rl->rlba = rl->rlda = 0;
+    /* drive status kept, drive 0 selected */
+    if (rl->irq_clr) rl->irq_clr(rl->irq_ctx, 0160);
+}
+
 int rl11_register(RL11 *rl, Bus *bus) {
+    if (bus_register_init(bus, rl, rl11_bus_init) < 0) return -1;
     rl->bus = bus;
     return bus_register(bus, RL11_BASE, RL11_END,
                         rl, rl11_read, rl11_write, "RL11", 150);

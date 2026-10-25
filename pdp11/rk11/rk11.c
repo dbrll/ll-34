@@ -230,6 +230,7 @@ static int rk05_write(void *dev, uint32_t addr, uint16_t data, int is_byte) {
     RK05 *rk = (RK05 *)dev;
     int reg = (addr >> 1) & 7;
     (void)is_byte;
+    if (!rk->init_l) return 0;
 
     switch (reg) {
     case 2:
@@ -251,6 +252,7 @@ static int rk05_write(void *dev, uint32_t addr, uint16_t data, int is_byte) {
 
 void rk05_init(RK05 *rk) {
     memset(rk, 0, sizeof(*rk));
+    rk->init_l = 1;
     rk->rkcs = RKCS_DONE;
 }
 
@@ -273,7 +275,19 @@ int rk05_attach(RK05 *rk, int drive, const char *filename, int read_only) {
     return 0;
 }
 
+/* BUS INIT: clear controller registers, set READY (EK-RK11D-MM-002 3.3) */
+static void rk05_bus_init(void *dev, int init_l) {
+    RK05 *rk = dev;
+    rk->init_l = (uint8_t)init_l;
+    if (init_l) return;
+    rk->rker = rk->rkwc = rk->rkba = rk->rkda = 0;
+    rk->rkds &= 0x0FFE;  /* drive status bits kept */
+    rk->rkcs = RKCS_DONE;
+    if (rk->irq_clr) rk->irq_clr(rk->irq_ctx, 0220);
+}
+
 int rk05_register(RK05 *rk, Bus *bus) {
+    if (bus_register_init(bus, rk, rk05_bus_init) < 0) return -1;
     rk->bus = bus;
     return bus_register(bus, RK05_BASE, RK05_END,
                         rk, rk05_read, rk05_write, "RK11-D", 150);

@@ -20,15 +20,14 @@ static int psw_read(void *dev, uint32_t addr, uint16_t *data) {
     return 0;
 }
 
+/* PSW written over the bus: LOAD PSW LOW or HIGH (K1-10 E75). The T bit
+ * (E109) is only loaded by LOAD PSW, bits 11-8 have no flip-flops. */
 static int psw_write(void *dev, uint32_t addr, uint16_t data, int is_byte) {
     Machine *m = dev;
-    (void)addr;
-    if (is_byte) {
-        /* DATOB: low byte only */
-        m->cpu.psw = (m->cpu.psw & 0xFF00) | (data & 0xFF);
-    } else {
-        m->cpu.psw = data;
-    }
+    uint16_t keep = 0x0010;
+    if (is_byte)
+        keep |= (addr & 1) ? 0x00FF : 0xFF00;
+    m->cpu.psw = (uint16_t)(((m->cpu.psw & keep) | (data & ~keep)) & 0xF0FF);
     return 0;
 }
 
@@ -61,11 +60,13 @@ int machine_init(Machine *m, const MachineConfig *cfg) {
 
     bus_init(&m->bus);
     ram_init(&m->ram, cfg->mem_kb * 512u);
+    if (cfg->timing == TIMING_AGED)
+        m->ram.refresh_interval_ns = 13640;   /* measured on the actual MS11-L */
     rom_init(&m->rom);
     dl11_init(&m->dl, 9600);
     rk05_init(&m->rk);
     rl11_init(&m->rl);
-    kw11_init(&m->kw, 60);
+    kw11_init(&m->kw, cfg->rtc_hz ? (int)cfg->rtc_hz : 60);
     pc11_init(&m->pc);
 
     ram_register(&m->ram, &m->bus);
@@ -90,8 +91,12 @@ int machine_init(Machine *m, const MachineConfig *cfg) {
     bus_register(&m->bus, 0x3FF80, 0x3FFBE,   /* User 777600-777676 */
                  &m->cpu.mmu, mmu_read, mmu_write, "U PAR/PDR", 100);
 
+    /* One INIT receiver for the MMU, independent of its three I/O ranges. */
+    bus_register_init(&m->bus, &m->cpu.mmu, mmu_bus_init);
+
     m->dl.clock_ptr = &m->cpu.ns_elapsed;
     m->dl.irq_set   = cpu_irq_set;
+    m->dl.irq_clr   = cpu_irq_clr;
     m->dl.irq_ctx   = &m->cpu;
 
     m->rk.irq_set = cpu_irq_set;
@@ -104,6 +109,7 @@ int machine_init(Machine *m, const MachineConfig *cfg) {
 
     m->kw.clock_ptr = &m->cpu.ns_elapsed;
     m->kw.irq_set   = cpu_irq_set;
+    m->kw.irq_clr   = cpu_irq_clr;
     m->kw.irq_ctx   = &m->cpu;
 
     m->pc.clock_ptr = &m->cpu.ns_elapsed;
@@ -113,6 +119,7 @@ int machine_init(Machine *m, const MachineConfig *cfg) {
 
     kd11ea_reset(&m->cpu);
     m->cpu.bus = &m->bus;
+    m->cpu.timing = cfg->timing == TIMING_AGED ? &clock_aged : &clock_nominal;
 
     console_init(&m->con);
     m->con.bus = &m->bus;
@@ -121,23 +128,11 @@ int machine_init(Machine *m, const MachineConfig *cfg) {
 }
 
 void machine_bus_init(Machine *m) {
-    m->dl.rcsr = 0;
-    m->dl.rbuf = 0;
-    m->dl.xcsr = DL11_XCSR_RDY;
-    m->dl.tx_done_at_ns = 0;
-
-    /* RK05: clear errors, controller done, preserve disk state */
-    m->rk.rker = 0;
-    m->rk.rkcs = RKCS_DONE;
-    m->rk.rkwc = 0;
-    m->rk.rkba = 0;
-    m->rk.rkda = 0;
-
-    /* KW11-L: clear status */
-    m->kw.lks = 0;
-
-    m->bus.nxm = 0;
-    int_init(&m->cpu.intc);
+    /* Administrative console INIT pulse. Peripheral semantics belong to
+     * their signal receivers, exactly as for a processor-driven BUS INIT.
+     * This API remains untimed, the CPU's E16 pulse has its own duration. */
+    bus_set_init(&m->bus, 0, m->cpu.ns_elapsed);
+    bus_set_init(&m->bus, 1, m->cpu.ns_elapsed);
 }
 
 void machine_cpu_reset(Machine *m) {
@@ -145,12 +140,31 @@ void machine_cpu_reset(Machine *m) {
      * hold absolute deadlines (the KW11 line clock runs off the mains) */
     struct Probe *probe = m->cpu.probe;
     uint64_t now = m->cpu.ns_elapsed;
+    const ClockTiming *timing = m->cpu.timing;
     kd11ea_reset(&m->cpu);
     m->cpu.bus   = &m->bus;
     m->cpu.probe = probe;
     m->cpu.ns_elapsed = now;
+    m->cpu.timing = timing;
     m->step_instr  = 0;
     m->step_usteps = 0;
+}
+
+int machine_set_timing_profile(Machine *m, TimingKind timing) {
+    if (!m->cpu.halted || (timing != TIMING_NOMINAL && timing != TIMING_AGED))
+        return -1;
+    m->cpu.timing = timing == TIMING_AGED ? &clock_aged : &clock_nominal;
+    m->ram.refresh_interval_ns = timing == TIMING_AGED ? 13640 : 14500;
+    return 0;
+}
+
+/* Line clock frequency (mains), 50 or 60 Hz */
+int machine_set_rtc_hz(Machine *m, unsigned hz) {
+    if (hz != 50 && hz != 60)
+        return -1;
+    m->kw.tick_interval_ns = 1000000000ULL / hz;
+    m->kw.next_tick_ns = m->cpu.ns_elapsed + m->kw.tick_interval_ns;
+    return 0;
 }
 
 /* Power-on bootstrap: microcode copies PC to R5, then loads vector */
@@ -227,6 +241,15 @@ MachineStop machine_run(Machine *m, uint64_t budget_ns) {
                 return stop_halted(m, MACHINE_STOP_BREAKPOINT);
             if (m->step_instr > 0 && --m->step_instr == 0)
                 return stop_halted(m, MACHINE_STOP_STEP);
+            if (m->host_stop) {
+                m->host_stop = 0;
+                return MACHINE_STOP_HOST;
+            }
+        }
+        /* No boundary in sight (WAIT with no interrupt): stop anyway */
+        if (m->host_stop && ++m->host_stop_usteps >= 100000) {
+            m->host_stop = 0;
+            return MACHINE_STOP_HOST;
         }
 
         if (m->step_usteps > 0 && --m->step_usteps == 0)
@@ -236,8 +259,10 @@ MachineStop machine_run(Machine *m, uint64_t budget_ns) {
             m->tick_counter = 0;
             int stop = m->host_tick ? m->host_tick(m->host_ctx) : 0;
             machine_tick(m);
-            if (stop)
-                return MACHINE_STOP_HOST;
+            if (stop && !m->host_stop) {
+                m->host_stop = 1;
+                m->host_stop_usteps = 0;
+            }
         }
     }
     return MACHINE_STOP_BUDGET;

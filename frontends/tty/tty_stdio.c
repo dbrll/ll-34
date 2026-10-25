@@ -1,7 +1,9 @@
 /*
  * frontends/tty/tty_stdio.c -- Stdio TTY backend for ll-34
  *
- * Raw mode terminal, restores settings on exit.
+ * Raw mode terminal, restores settings on exit. When stdin is not a
+ * terminal (a file, a pipe, /dev/null), it is read as typed input, and its
+ * end means no more input.
  */
 
 #define _DEFAULT_SOURCE
@@ -17,6 +19,7 @@ typedef struct {
     TTY base;
     struct termios orig;
     int raw_active;
+    int eof;
 } TTY_Stdio;
 
 static int  stdio_rx_ready(TTY *tty);
@@ -41,12 +44,11 @@ static void sighandler(int sig) {
 }
 
 TTY *tty_stdio_create(void) {
-    if (!isatty(STDIN_FILENO))
-        return NULL;
-
     TTY_Stdio *s = calloc(1, sizeof(*s));
     if (!s) return NULL;
 
+    if (!isatty(STDIN_FILENO))
+        goto io;
     if (tcgetattr(STDIN_FILENO, &s->orig) < 0) {
         free(s);
         return NULL;
@@ -70,6 +72,8 @@ TTY *tty_stdio_create(void) {
     atexit(cleanup);
     signal(SIGTERM, sighandler);
 
+io:
+    g_stdio = s;
     s->base.rx_ready  = stdio_rx_ready;
     s->base.rx_read   = stdio_rx_read;
     s->base.tx_write  = stdio_tx_write;
@@ -80,7 +84,7 @@ TTY *tty_stdio_create(void) {
 }
 
 static int stdio_rx_ready(TTY *tty) {
-    (void)tty;
+    if (((TTY_Stdio *)tty)->eof) return 0;
     fd_set fds;
     struct timeval tv = {0, 0};
     FD_ZERO(&fds);
@@ -89,12 +93,13 @@ static int stdio_rx_ready(TTY *tty) {
 }
 
 static int stdio_rx_read(TTY *tty) {
-    (void)tty;
     uint8_t ch;
-    if (read(STDIN_FILENO, &ch, 1) == 1) {
+    ssize_t n = read(STDIN_FILENO, &ch, 1);
+    if (n == 1) {
         if (ch == '\n') ch = '\r';
         return ch;
     }
+    if (n == 0) ((TTY_Stdio *)tty)->eof = 1;
     return -1;
 }
 

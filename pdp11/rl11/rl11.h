@@ -80,6 +80,7 @@
 #define RL_NUMDR        4       /* max drives */
 
 typedef struct {
+    uint8_t init_l;    /* received BUS INIT L */
     uint16_t rlcs, rlba, rlda, rlmp;
     FILE    *disk[RL_NUMDR];
     int      read_only[RL_NUMDR];

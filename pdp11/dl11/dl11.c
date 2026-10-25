@@ -12,6 +12,7 @@
 
 void dl11_init(DL11 *dl, uint32_t baud_rate) {
     memset(dl, 0, sizeof(*dl));
+    dl->init_l = 1;
     dl->xcsr = DL11_XCSR_RDY;  /* Transmitter starts ready */
 
     /* Character time: 10 bits per char (8N1 = start + 8 data + stop).
@@ -21,6 +22,7 @@ void dl11_init(DL11 *dl, uint32_t baud_rate) {
 }
 
 void dl11_tick(DL11 *dl, uint64_t now_ns) {
+    if (!dl->init_l) return;
     /* TX completion */
     if (!(dl->xcsr & DL11_XCSR_RDY) && dl->tx_done_at_ns > 0) {
         if (now_ns >= dl->tx_done_at_ns) {
@@ -54,7 +56,7 @@ static int dl11_read(void *dev, uint32_t addr, uint16_t *data) {
     switch (reg) {
     case DL11_RCSR:
         /* Inline RX poll for accurate busy-wait (tick is every 256 usteps) */
-        if (!(dl->rcsr & DL11_RCSR_DONE)) {
+        if (dl->init_l && !(dl->rcsr & DL11_RCSR_DONE)) {
             if (dl->rx_ready && dl->rx_ready(dl->io_ctx)) {
                 int ch = dl->rx_read(dl->io_ctx);
                 if (ch >= 0) {
@@ -93,6 +95,7 @@ static int dl11_read(void *dev, uint32_t addr, uint16_t *data) {
 static int dl11_write(void *dev, uint32_t addr, uint16_t data, int is_byte) {
     DL11 *dl = dev;
     uint32_t reg = addr & ~1u;
+    if (!dl->init_l) return 0;
 
     switch (reg) {
     case DL11_RCSR: {
@@ -103,8 +106,12 @@ static int dl11_write(void *dev, uint32_t addr, uint16_t data, int is_byte) {
             trace("DL11: RCSR IE %s (DONE=%d)\n",
                     new_ie ? "SET" : "CLR",
                     !!(dl->rcsr & DL11_RCSR_DONE));
-        if ((dl->rcsr & DL11_RCSR_IE) && (dl->rcsr & DL11_RCSR_DONE) && dl->irq_set)
+        /* DONE AND IE clocks the request flip-flop: only a rising edge
+         * requests, and clearing IE drops the request (DL11-W TM 4.3.1) */
+        if (!old_ie && new_ie && (dl->rcsr & DL11_RCSR_DONE) && dl->irq_set)
             dl->irq_set(dl->irq_ctx, 0060, 4);
+        if (old_ie && !new_ie && dl->irq_clr)
+            dl->irq_clr(dl->irq_ctx, 0060);
         return 0;
     }
     case DL11_RBUF:
@@ -117,8 +124,11 @@ static int dl11_write(void *dev, uint32_t addr, uint16_t data, int is_byte) {
             trace("DL11: XCSR IE %s (RDY=%d)\n",
                     new_ie ? "SET" : "CLR",
                     !!(dl->xcsr & DL11_XCSR_RDY));
-        if ((dl->xcsr & DL11_XCSR_IE) && (dl->xcsr & DL11_XCSR_RDY) && dl->irq_set)
+        /* XMIT RDY AND IE clocks the request flip-flop (DL11-W TM 4.3.2) */
+        if (!old_ie && new_ie && (dl->xcsr & DL11_XCSR_RDY) && dl->irq_set)
             dl->irq_set(dl->irq_ctx, 0064, 4);
+        if (old_ie && !new_ie && dl->irq_clr)
+            dl->irq_clr(dl->irq_ctx, 0064);
         return 0;
     }
     case DL11_XBUF: {
@@ -135,7 +145,22 @@ static int dl11_write(void *dev, uint32_t addr, uint16_t data, int is_byte) {
     return -1;
 }
 
+/* BUS INIT: clear RCSR/XCSR, set XMIT RDY, keep RBUF (DL11-W TM ch. 3) */
+static void dl11_bus_init(void *dev, int init_l) {
+    DL11 *dl = dev;
+    dl->init_l = (uint8_t)init_l;
+    if (init_l) return;
+    dl->rcsr = 0;
+    dl->xcsr = DL11_XCSR_RDY;
+    dl->tx_done_at_ns = 0;
+    if (dl->irq_clr) {
+        dl->irq_clr(dl->irq_ctx, 0060);
+        dl->irq_clr(dl->irq_ctx, 0064);
+    }
+}
+
 int dl11_register(DL11 *dl, Bus *bus) {
+    if (bus_register_init(bus, dl, dl11_bus_init) < 0) return -1;
     return bus_register(bus, DL11_BASE, DL11_END,
                         dl, dl11_read, dl11_write, "DL11", 150);
 }

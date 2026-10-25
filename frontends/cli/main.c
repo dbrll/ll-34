@@ -11,6 +11,7 @@
  */
 
 #define _DEFAULT_SOURCE   /* usleep, strncasecmp on musl/glibc */
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,6 +36,7 @@
 #include "pdp11/pc11/pc11.h"
 #include "pdp11/ky11/console.h"
 #include "pdp11/probe/probe.h"
+#include "pdp11/version.h"
 #include "pdp11/debug/disasm.h"
 #include "pdp11/debug/memdump.h"
 #include "pdp11/unibus/loader.h"
@@ -57,6 +59,7 @@ static void sigterm_handler(int sig) { (void)sig; got_sigterm = 1; }
 
 #define CLI_SLICE_NS      1000000  /* run slice between host checks (1 ms) */
 static int halt_requested;
+static int unpaced;            /* --unpaced: no real-time pacing */
 static int debug_requested;
 static int probe_requested;
 
@@ -90,7 +93,10 @@ static int stdin_raw_enter(void) {
     return 0;
 }
 
+static int stdin_eof;   /* stdin is a file or a pipe, and it has ended */
+
 static int stdin_rx_ready(void) {
+    if (stdin_eof) return 0;
     fd_set fds;
     struct timeval tv = {0, 0};
     FD_ZERO(&fds);
@@ -100,7 +106,9 @@ static int stdin_rx_ready(void) {
 
 static int stdin_rx_read(void) {
     uint8_t ch;
-    if (read(STDIN_FILENO, &ch, 1) == 1) return ch;
+    ssize_t n = read(STDIN_FILENO, &ch, 1);
+    if (n == 1) return ch;
+    if (n == 0) stdin_eof = 1;
     return -1;
 }
 
@@ -157,8 +165,21 @@ static int map_console_key(int ch) {
     return -1;
 }
 
+/* The emulated terminal in green, ll-34 itself (consoles, messages) in the
+ * default colour, unless NO_COLOR is set */
+static int colour_ok = -1, colour_now;
+static void term_colour(int emulation) {
+    if (colour_ok < 0) colour_ok = getenv("NO_COLOR") == NULL && isatty(STDOUT_FILENO);
+    if (!colour_ok || colour_now == emulation) return;
+    colour_now = emulation;
+    fputs(emulation ? "\033[32m" : "\033[0m", stdout);
+    fflush(stdout);
+}
+
 static void console_prompt(void) {
-    fprintf(stderr, "\r%06o %06o > ", console_addr_ptr(&m.con), m.con.display);
+    term_colour(0);
+    /* KY11-LB address pointer and 6-digit display */
+    fprintf(stderr, "\rconsole |ADDR=%06o DISP=%06o|> ", console_addr_ptr(&m.con), m.con.display);
 }
 
 static void console_help(void) {
@@ -170,12 +191,17 @@ static void console_help(void) {
         "  s       single step       b   boot\r\n"
         "  i       bus init          Esc clear\r\n"
         "  a       display address   q   quit ll-34\r\n"
+        "\r\n"
+        "  (Ctrl-E debugger, Ctrl-L logic analyzer)\r\n"
         "\r\n");
 }
 
 static void enter_console_mode(const char *reason) {
-    fprintf(stderr, "\r\nll-34: %s at PC=%06o PSW=%06o\r\n",
-            reason, PC(&m.cpu), m.cpu.psw);
+    term_colour(0);
+    if (reason)
+        fprintf(stderr, "\r\nll-34: %s\r\n", reason);
+    else
+        fprintf(stderr, "\r\n");
     if (!console_shown_help) {
         console_shown_help = 1;
         fprintf(stderr, "Programmer console (? for help)\r\n");
@@ -186,6 +212,8 @@ static void enter_console_mode(const char *reason) {
 }
 
 static void probe_cli(void);  /* forward declaration */
+static int run_reported;      /* CONT, START or BOOT already announced */
+static void open_consoles(int mode, int resume);
 
 /* Poll stdin for console keys. Returns -1 on quit. */
 static int console_poll(void) {
@@ -203,6 +231,7 @@ static int console_poll(void) {
             int c2 = stdin_rx_read();
             if (c2 == 'y' || c2 == 'Y') {
                 fprintf(stderr, "y\r\n");
+                term_colour(0);
                 return -1;
             }
             fprintf(stderr, "n\r\n");
@@ -212,15 +241,16 @@ static int console_poll(void) {
     }
 
     /* '?' = help */
-    if (ch == '?') {
+    if (ch == '?' || ch == 'h') {
         console_help();
         console_prompt();
         return 0;
     }
 
-    if (ch == PROBE_CHAR) {
-        probe_cli();
-        console_prompt();
+    if (ch == PROBE_CHAR || ch == DEBUG_CHAR) {   /* other consoles */
+        open_consoles(ch, 0);
+        if (m.cpu.halted)
+            enter_console_mode(NULL);
         return 0;
     }
 
@@ -239,6 +269,15 @@ static int console_poll(void) {
     }
 
     console_key(&m.con, key);
+    if (!m.cpu.halted) {                           /* CONT, START, BOOT */
+        term_colour(0);
+        if (key == KEY_START)
+            fprintf(stderr, "\r\nll-34: START at %06o\r\n", PC(&m.cpu));
+        else
+            fprintf(stderr, "\r\nll-34: %s\r\n", key == KEY_BOOT ? "BOOT" : "CONT");
+        run_reported = 1;
+        return 0;
+    }
 
     /* Auto-EXAM after address-changing actions */
     if (key == KEY_HALT_SS && m.cpu.halted) {
@@ -315,98 +354,143 @@ static void line_replace(int old_len, const char *new_str, int new_len) {
 
 /* Tab completion for probe/debug CLI */
 static const char *probe_commands[] = {
-    "list", "add", "rm", "clear", "trigger", "depth", "pos",
-    "arm", "disarm", "status", "show", "dump", "quit", "help", NULL
+    "list", "find", "add", "rm", "clear", "trigger", "depth", "pos",
+    "arm", "disarm", "status", "show", "export", NULL
 };
 
-static int probe_complete(char *buf, int n, int max) {
-    int word_start = n;
-    while (word_start > 0 && buf[word_start - 1] != ' ' && buf[word_start - 1] != '\t')
-        word_start--;
-    int prefix_len = n - word_start;
-    if (prefix_len == 0) return n;
+/* Console to open next (Ctrl-P, Ctrl-E, Ctrl-L typed in a console), 0 none */
+static int next_mode;
 
-    char prefix[80];
-    if (prefix_len >= (int)sizeof(prefix)) return n;
-    memcpy(prefix, buf + word_start, prefix_len);
-    prefix[prefix_len] = '\0';
+/* Console using the line editor: its prompt and help */
+static const char *cli_prompt = "probe> ";
+static void (*cli_help)(void);
+static const char *cli_immediate = "q";   /* commands taken without Enter */
+static int cli_self;                       /* key of the console in use */
 
-    /* First word = command, subsequent = signal */
-    int is_first_word = 1;
-    for (int i = 0; i < word_start; i++) {
-        if (buf[i] != ' ' && buf[i] != '\t') { is_first_word = 0; break; }
-    }
-
-    const char *matches[128];
-    int nmatch = 0;
-
-    if (is_first_word) {
-        /* Complete commands */
-        for (int i = 0; probe_commands[i]; i++) {
-            if (strncasecmp(probe_commands[i], prefix, prefix_len) == 0
-                && nmatch < 128)
-                matches[nmatch++] = probe_commands[i];
-        }
+/* Sheet of a signal: "K2-8", "BUS", or board and chip "K2:E102" */
+static void probe_sheet_of(const ProbeDef *d, char *out, int max) {
+    const char *n = d->name, *e = n;
+    if (!n) { out[0] = '\0'; return; }
+    if (n[0] == 'K' && n[2] == ':') {                 /* "K2:E102:1" */
+        e = strchr(n + 3, ':');
+        if (!e) e = n + strlen(n);
     } else {
-        /* Complete signal names (chip_pin and alias) */
+        while (*e && *e != ' ') e++;
+    }
+    int l = (int)(e - n) < max - 1 ? (int)(e - n) : max - 1;
+    memcpy(out, n, l);
+    out[l] = '\0';
+}
+
+/* Print strings in columns, at most 60 */
+static void probe_columns(const char **v, int nv) {
+    int w = 0;
+    for (int i = 0; i < nv; i++) { int l = (int)strlen(v[i]); if (l > w) w = l; }
+    w += 2;
+    int cols = 78 / w; if (cols < 1) cols = 1;
+    int shown = nv > 60 ? 60 : nv;
+    for (int i = 0; i < shown; i++)
+        fprintf(stderr, "%s%-*s%s", i % cols ? "" : "  ", w, v[i],
+                (i % cols == cols - 1 || i == shown - 1) ? "\r\n" : "");
+    if (nv > shown)
+        fprintf(stderr, "  ... %d more: type more letters, or list <sheet|chip>\r\n", nv - shown);
+}
+
+/* Tab: the first word completes as a command. After add, rm, trigger,
+ * the item being typed (after the command or the last comma, spaces
+ * included) completes as a signal: DEC name, alias, chip:pin or
+ * board:chip:pin. After list: sheets and chips. */
+static int probe_complete(char *buf, int n, int max) {
+    buf[n] = '\0';
+    int cmd_end = 0;
+    while (buf[cmd_end] == ' ') cmd_end++;
+    int cmd_start = cmd_end;
+    while (buf[cmd_end] && buf[cmd_end] != ' ') cmd_end++;
+    static const char *cand[2048];
+    int nc = 0, item;
+
+    if (cmd_end == n) {                             /* command */
+        item = cmd_start;
+        for (int i = 0; probe_commands[i]; i++)
+            if (!strncasecmp(probe_commands[i], buf + item, n - item))
+                cand[nc++] = probe_commands[i];
+    } else {
+        char cmd[16];
+        int cl = cmd_end - cmd_start < 15 ? cmd_end - cmd_start : 15;
+        memcpy(cmd, buf + cmd_start, cl); cmd[cl] = '\0';
+        item = cmd_end;
+        for (int i = cmd_end; i < n; i++) if (buf[i] == ',') item = i + 1;
+        while (item < n && buf[item] == ' ') item++;
+        const char *pre = buf + item;
+        int pl = n - item;
         int count = probe_def_count();
-        for (int i = 0; i < count && nmatch < 128; i++) {
-            const ProbeDef *d = probe_def_get(i);
-            if (d->chip_pin && strncasecmp(d->chip_pin, prefix, prefix_len) == 0)
-                matches[nmatch++] = d->chip_pin;
-            if (d->alias && strncasecmp(d->alias, prefix, prefix_len) == 0
-                && nmatch < 128)
-                matches[nmatch++] = d->alias;
-        }
-    }
-
-    if (nmatch == 0) return n;
-
-    if (nmatch == 1) {
-        const char *m = matches[0];
-        int mlen = (int)strlen(m);
-        int add = mlen - prefix_len;
-        if (word_start + mlen + 1 < max) {
-                fwrite(m + prefix_len, 1, add, stderr);
-            fprintf(stderr, " ");
-            memcpy(buf + word_start, m, mlen);
-            buf[word_start + mlen] = ' ';
-            return word_start + mlen + 1;
-        }
-        return n;
-    }
-
-    /* Multiple matches: extend to common prefix */
-    int common = prefix_len;
-    for (;; common++) {
-        char c = matches[0][common];
-        if (!c) break;
-        int all_same = 1;
-        for (int i = 1; i < nmatch; i++) {
-            if (!matches[i][common] || matches[i][common] != c) {
-                all_same = 0;
-                break;
+        if (!strcasecmp(cmd, "list")) {             /* sheets and chips */
+            static char names[512][24];
+            int nn = 0;
+            for (int i = 0; i < count && nn < 512; i++) {
+                const ProbeDef *d = probe_def_get(i);
+                char sh[24]; probe_sheet_of(d, sh, sizeof sh);
+                int dup = 0;
+                for (int k = 0; k < nn; k++) if (!strcasecmp(names[k], sh)) dup = 1;
+                if (!dup && sh[0]) strcpy(names[nn++], sh);
+            }
+            if (!strncasecmp("all", pre, pl)) cand[nc++] = "all";
+            for (int k = 0; k < nn && nc < 2048; k++)
+                if (!strncasecmp(names[k], pre, pl)) cand[nc++] = names[k];
+        } else if (!strcasecmp(cmd, "add") || !strcasecmp(cmd, "rm") || !strcasecmp(cmd, "trigger")) {
+            for (int i = 0; i < count && nc < 2040; i++) {
+                const ProbeDef *d = probe_def_get(i);
+                const char *q = probe_def_qloc(i);
+                if (d->name && !strncasecmp(d->name, pre, pl)) cand[nc++] = d->name;
+                if (d->alias && !strncasecmp(d->alias, pre, pl)) cand[nc++] = d->alias;
+                if (q && pl >= 2 && !strncasecmp(q, pre, pl)) cand[nc++] = q;
             }
         }
-        if (!all_same) break;
     }
-
-    if (common > prefix_len) {
-        int add = common - prefix_len;
-        if (word_start + common < max) {
-            fwrite(matches[0] + prefix_len, 1, add, stderr);
-            memcpy(buf + word_start, matches[0], common);
-            return word_start + common;
-        }
+    if (nc == 0) return n;
+    int common = (int)strlen(cand[0]);
+    for (int i = 1; i < nc; i++) {
+        int k = 0;
+        while (k < common && cand[i][k] && toupper((unsigned char)cand[i][k]) == toupper((unsigned char)cand[0][k])) k++;
+        common = k;
     }
-
-    fprintf(stderr, "\r\n");
-    for (int i = 0; i < nmatch; i++)
-        fprintf(stderr, "  %s\r\n", matches[i]);
-    fprintf(stderr, "probe> ");
-    buf[n] = '\0';
-    fwrite(buf, 1, n, stderr);
+    if (common > n - item && item + common < max - 1) {   /* extend */
+        for (int i = item; i < n; i++) fprintf(stderr, "\b \b");
+        memcpy(buf + item, cand[0], common);
+        n = item + common;
+        buf[n] = '\0';
+        fwrite(buf + item, 1, common, stderr);
+        return n;
+    }
+    if (nc > 1) {
+        fprintf(stderr, "\r\n");
+        probe_columns(cand, nc);
+        fprintf(stderr, "%s%s", cli_prompt, buf);
+    }
     return n;
+}
+
+static void probe_help(void) {
+    fprintf(stderr,
+        "  list [all|sheet|chip]   sheets, all signals, or those of a sheet (K2-8) or chip (E38)\r\n"
+        "  find <text>             search signal by name, chip or description\r\n"
+        "  add <sig>[, <sig>...]   add signals: DEC name, alias, E38:9 or K2:E107:3\r\n"
+        "  rm <sig>[, <sig>...]    remove signals\r\n"
+        "  clear                   remove all signals\r\n"
+        "  trigger <sig> <val> [mask]  trigger on a value (octal)\r\n"
+        "  depth <n>               buffer depth (power of 2)\r\n"
+        "  rate [n]                sample divider (1 = every micro-cycle)\r\n"
+        "  pos <pct>               trigger position (0 start, 50 centre, 100 end)\r\n"
+        "  arm | disarm            arm or disarm the capture\r\n"
+        "  status                  current state\r\n"
+        "  show [N|all]            captured data (default 20 lines)\r\n"
+        "  export <file> [MHz]     export capture to VCD or sigrok, by file extension\r\n"
+        "  q                       back to the program or the console\r\n"
+        "\r\n"
+        "  Tab completes commands and signal names.\r\n"
+        "\r\n"
+        "  (Ctrl-E debugger, Ctrl-L logic analyzer)\r\n"
+        "\r\n");
 }
 
 /* Readline with echo, history, and tab completion. Returns -1 on Ctrl-C. */
@@ -418,6 +502,26 @@ static int probe_readline(char *buf, int max) {
         int ch = term_getc();
 
         if (ch == 0x03) return -1;       /* Ctrl-C → quit probe CLI */
+        if (ch == cli_self)              /* already in that console */
+            continue;
+        if (ch == CONSOLE_HALT_CHAR || ch == DEBUG_CHAR || ch == PROBE_CHAR) {
+            next_mode = ch;              /* switch console */
+            fprintf(stderr, "\r\n");
+            return -1;
+        }
+
+        if (n == 0 && (ch == '?' || ch == 'h') && cli_help) {   /* help at once */
+            fprintf(stderr, "%c\r\n", ch);
+            cli_help();
+            fprintf(stderr, "%s", cli_prompt);
+            continue;
+        }
+
+        if (n == 0 && ch > ' ' && strchr(cli_immediate, ch)) {   /* no argument */
+            fprintf(stderr, "%c\r\n", ch);
+            buf[0] = (char)ch; buf[1] = '\0';
+            return 1;
+        }
 
         if (ch == '\r' || ch == '\n') {
             fprintf(stderr, "\r\n");
@@ -500,48 +604,6 @@ static int tokenize(char *line, char **tokens, int max_tokens) {
     return n;
 }
 
-static int probe_dump_csv(Probe *p, const char *path) {
-    FILE *f = fopen(path, "w");
-    if (!f) return -1;
-
-    fprintf(f, "ns");
-    for (int i = 0; i < p->nsignals; i++) {
-        const ProbeDef *def = probe_def_get(p->signal_idx[i]);
-        fprintf(f, ",%s", probe_display_name(def));
-    }
-    fprintf(f, "\n");
-
-    uint32_t start;
-    uint32_t total;
-    if (p->count >= p->depth) {
-        start = p->head;   /* oldest entry (just wrapped) */
-        total = p->depth;
-    } else {
-        start = 0;
-        total = p->count;
-    }
-
-    for (uint32_t i = 0; i < total; i++) {
-        uint32_t idx = (start + i) & p->mask;
-        const ProbeSnapshot *snap = &p->buf[idx];
-
-        fprintf(f, "%llu", (unsigned long long)snap->ns);
-
-        for (int s = 0; s < p->nsignals; s++) {
-            const ProbeDef *def = probe_def_get(p->signal_idx[s]);
-            uint32_t val = probe_read_value(snap, def);
-            if (def->bit != PROBE_BIT_WHOLE)
-                fprintf(f, ",%u", val);
-            else
-                fprintf(f, ",%o", val);
-        }
-        fprintf(f, "\n");
-    }
-
-    fclose(f);
-    return (int)total;
-}
-
 static const char *fmt_comma(uint32_t val) {
     static char buf[20];
     char tmp[20];
@@ -561,47 +623,170 @@ static const char *fmt_comma(uint32_t val) {
     return buf;
 }
 
-static void probe_cmd_list(int ntok, char **tok) {
+/* Sort key: K1-1..K1-10, K2-1..K2-10, then chips by number, then BUS */
+static int probe_sheet_key(const char *n) {
+    if ((n[0] == 'K') && n[2] == '-') return (n[1] - '0') * 100 + atoi(n + 3);
+    if ((n[0] == 'K') && n[2] == ':' && n[3] == 'E') return 1000 + atoi(n + 4);
+    return 5000;
+}
+
+static void probe_print_def(int i) {
+    const ProbeDef *d = probe_def_get(i);
+    const char *q = probe_def_qloc(i);
+    fprintf(stderr, "  %-30s %-12s %s\r\n", probe_display_name(d),
+            q ? q : (d->loc ? d->loc : ""), d->desc ? d->desc : "");
+}
+
+/* list shows the sheets, list all every signal, list K2-8 a sheet,
+ * list E38 or K2:E107 a chip */
+static void probe_cmd_list(const char *rest) {
     int count = probe_def_count();
-    if (ntok >= 2) {
-        const char *prefix = tok[1];
-        int plen = strlen(prefix);
-        for (int i = 0; i < count; i++) {
-            const ProbeDef *d = probe_def_get(i);
-            if (d->chip_pin && strncasecmp(d->chip_pin, prefix, plen) == 0) {
-                fprintf(stderr, "  %-16s %-12s %s  [%s]\r\n",
-                        d->chip_pin,
-                        d->alias ? d->alias : "",
-                        d->desc,
-                        d->level == 1 ? "direct" : "derived");
-            }
-        }
+    char sh[24], arg[64];
+    snprintf(arg, sizeof arg, "%s", rest ? rest : "");
+    for (char *e = arg + strlen(arg); e > arg && e[-1] == ' '; ) *--e = '\0';
+    if (!strcasecmp(arg, "all")) {
+        for (int i = 0; i < count; i++) probe_print_def(i);
         return;
     }
-
-    char prev_prefix[32] = "";
+    if (!*arg) {
+        static char names[512][24];
+        static int num[512];
+        int nn = 0;
+        memset(num, 0, sizeof num);
+        for (int i = 0; i < count; i++) {
+            probe_sheet_of(probe_def_get(i), sh, sizeof sh);
+            if (!sh[0]) continue;
+            int k = 0;
+            while (k < nn && strcasecmp(names[k], sh)) k++;
+            if (k == nn && nn < 512) strcpy(names[nn++], sh);
+            if (k < 512) num[k]++;
+        }
+        fprintf(stderr, "  %-9s %3d  %s\r\n", "all", count, "All signals");
+        int ord[512];                                 /* schematic order */
+        for (int k = 0; k < nn; k++) ord[k] = k;
+        for (int i = 1; i < nn; i++)
+            for (int j = i; j > 0 && probe_sheet_key(names[ord[j]]) < probe_sheet_key(names[ord[j - 1]]); j--) {
+                int t = ord[j]; ord[j] = ord[j - 1]; ord[j - 1] = t;
+            }
+        for (int i = 0; i < nn; i++) {
+            int k = ord[i];
+            const char *t = probe_chip_name(names[k]);
+            fprintf(stderr, "  %-9s %3d  %s\r\n", names[k], num[k], t ? t : "");
+        }
+        fprintf(stderr, "  list all, list <sheet> or list <chip>, Tab completes\r\n");
+        return;
+    }
+    int shown = 0;
+    for (int i = 0; i < count; i++) {                 /* a sheet */
+        probe_sheet_of(probe_def_get(i), sh, sizeof sh);
+        if (!strcasecmp(sh, arg)) { probe_print_def(i); shown++; }
+    }
+    if (shown) return;
+    const char *chip = arg, *board = NULL;            /* a chip */
+    char bb[3] = "";
+    if ((arg[0] == 'K' || arg[0] == 'k') && arg[1] && arg[2] == ':') {
+        bb[0] = 'K'; bb[1] = arg[1]; bb[2] = '\0'; board = bb; chip = arg + 3;
+    }
+    size_t cl = strlen(chip);
     for (int i = 0; i < count; i++) {
         const ProbeDef *d = probe_def_get(i);
-        if (!d->chip_pin) continue;
-        const char *last_colon = strrchr(d->chip_pin, ':');
-        if (!last_colon) continue;
-        int prefix_len = (int)(last_colon - d->chip_pin);
-        char prefix[32];
-        if (prefix_len >= (int)sizeof(prefix)) prefix_len = sizeof(prefix) - 1;
-        memcpy(prefix, d->chip_pin, prefix_len);
-        prefix[prefix_len] = '\0';
-        const char *pin_str = last_colon + 1;  /* "1", "5", "*" */
-
-        if (strcmp(prev_prefix, prefix) != 0) {
-            if (prev_prefix[0]) fprintf(stderr, "\r\n");
-            fprintf(stderr, "  %s  [%s]\r\n", prefix,
-                    d->level == 1 ? "direct" : "derived");
-            memcpy(prev_prefix, prefix, prefix_len + 1);
-        }
-        fprintf(stderr, "    :%s\t%-12s %s\r\n",
-                pin_str, d->alias ? d->alias : "", d->desc);
+        const char *db = probe_def_board(d);
+        if (d->loc && !strncasecmp(d->loc, chip, cl) && (d->loc[cl] == ':' || !d->loc[cl]) &&
+            (!board || (db && !strcasecmp(db, board)))) { probe_print_def(i); shown++; }
     }
-    fprintf(stderr, "\r\n");
+    if (!shown) fprintf(stderr, "  no sheet or chip %s\r\n", arg);
+}
+
+static void probe_cmd_find(const char *text) {
+    int count = probe_def_count(), shown = 0;
+    size_t tl = strlen(text);
+    for (int i = 0; i < count; i++) {
+        const ProbeDef *d = probe_def_get(i);
+        const char *f[4] = { d->name, d->alias, d->loc, d->desc };
+        int hit = 0;
+        for (int k = 0; k < 4 && !hit; k++)
+            for (const char *c = f[k]; c && *c && !hit; c++)
+                if (!strncasecmp(c, text, tl)) hit = 1;
+        if (hit) { probe_print_def(i); shown++; }
+    }
+    if (!shown) fprintf(stderr, "  nothing matches %s\r\n", text);
+}
+
+/* add and rm: items separated by commas, a name may contain spaces.
+ * Old forms are still accepted: space separated, K2:E60:1-5 ranges. */
+static int probe_add_rm_one(const char *it, int add) {
+    if (add) {
+        const char *dash = strchr(it, '-'), *colon = strrchr(it, ':');
+        if (dash && colon && dash > colon) {          /* K2:E60:1-5 */
+            int a = atoi(colon + 1), b = atoi(dash + 1), ok = 0;
+            for (int pin = a; pin <= b; pin++) {
+                char name[80];
+                snprintf(name, sizeof name, "%.*s%d", (int)(colon - it + 1), it, pin);
+                if (probe_add_signal(&probe, name) == 0) ok++;
+            }
+            return ok;
+        }
+        return probe_add_signal(&probe, it) == 0;
+    }
+    return probe_rm_signal(&probe, it) == 0;
+}
+
+static void probe_cmd_add_rm(char *rest, int add) {
+    int done = 0, before = probe.nsignals;
+    char *item = rest;
+    for (;;) {
+        char *comma = strchr(item, ',');
+        if (comma) *comma = '\0';
+        while (*item == ' ') item++;
+        char *e = item + strlen(item);
+        while (e > item && e[-1] == ' ') *--e = '\0';
+        if (*item) {
+            if (probe_find_signal(item) == -2) {
+                fprintf(stderr, "  %s is on both boards: K1:%s or K2:%s\r\n", item, item, item);
+            } else if (probe_add_rm_one(item, add)) {
+                done++;
+            } else if (strchr(item, ' ')) {           /* old form: one per word */
+                char tmp[256], *w, *sv;
+                snprintf(tmp, sizeof tmp, "%s", item);
+                for (w = strtok_r(tmp, " ", &sv); w; w = strtok_r(NULL, " ", &sv)) {
+                    if (probe_add_rm_one(w, add)) done++;
+                    else fprintf(stderr, "  unknown signal: %s\r\n", w);
+                }
+            } else {
+                fprintf(stderr, "  unknown signal: %s\r\n", item);
+            }
+        }
+        if (!comma) break;
+        item = comma + 1;
+    }
+    (void)done;
+    int delta = add ? probe.nsignals - before : before - probe.nsignals;
+    fprintf(stderr, "  %d signal%s %s (%d total)\r\n", delta, delta == 1 ? "" : "s",
+            add ? "added" : "removed", probe.nsignals);
+}
+
+/* trigger <signal> <value> [mask]: the signal may contain spaces */
+static void probe_cmd_trigger(char *rest) {
+    char *w[24];
+    int nw = tokenize(rest, w, 24);
+    for (int nnum = 1; nnum <= 2 && nnum < nw; nnum++) {
+        char name[200] = "";
+        for (int i = 0; i < nw - nnum; i++) {
+            if (i) strncat(name, " ", sizeof name - strlen(name) - 1);
+            strncat(name, w[i], sizeof name - strlen(name) - 1);
+        }
+        if (probe_find_signal(name) < 0) continue;
+        uint32_t val = parse_octal(w[nw - nnum]);
+        uint32_t mask = nnum == 2 ? parse_octal(w[nw - 1]) : 0xFFFFFFFF;
+        if (probe_set_trigger(&probe, name, val, mask) == 0) {
+            if (nnum == 2)
+                fprintf(stderr, "  trigger: %s == %o (mask %o)\r\n", name, val, mask);
+            else
+                fprintf(stderr, "  trigger: %s == %o\r\n", name, val);
+            return;
+        }
+    }
+    fprintf(stderr, "  usage: trigger <signal> <value> [mask] (signal unknown or ambiguous)\r\n");
 }
 
 static void probe_cmd_show(Probe *p, int show_lines, int ntok, char **tok) {
@@ -664,7 +849,7 @@ static void probe_cmd_show(Probe *p, int show_lines, int ntok, char **tok) {
         has_trigger = 1;
     }
 
-    uint32_t eff_ns = CYCLE_SHORT_NS * probe.divider;
+    uint32_t eff_ns = clock_timing(m.cpu.timing)->short_ns * probe.divider;
     uint32_t sr = 1000000000u / eff_ns;
     if (probe.divider == 1)
         fprintf(stderr, "  SR: %s Hz (realtime CPU clock), resolution: %u ns/sample\r\n",
@@ -719,7 +904,7 @@ static int debug_read_word(uint16_t vba, void *ctx) {
     uint32_t pba;
     if (m.cpu.mmu.sr0 & SR0_ENABLE) {
         int mode = (m.cpu.psw >> 14) & 3;
-        if (mmu_translate(&m.cpu.mmu, vba, mode, 0, PC(&m.cpu), &pba) < 0) {
+        if (mmu_translate(&m.cpu.mmu, vba, mode, 0, m.cpu.mmu.sr0 & SR0_ENABLE, PC(&m.cpu), &pba) < 0) {
             /* MMU abort - direct mapping fallback */
             pba = vba;
             if ((vba & 0xE000) == 0xE000)
@@ -777,16 +962,73 @@ static void debug_show_mmu(void) {
     }
 }
 
+/* One disassembled instruction: address, words, text. Returns its size. */
+static int debug_print_insn(uint16_t a) {
+    char disasm_buf[80];
+    int nbytes = pdp11_disasm(a, debug_read_word, NULL,
+                              disasm_buf, sizeof(disasm_buf));
+    int w0 = debug_read_word(a, NULL);
+    char opcodes[40];
+    if (nbytes == 2)
+        snprintf(opcodes, sizeof(opcodes), "%06o",
+                 w0 < 0 ? 0 : w0);
+    else if (nbytes == 4) {
+        int w1 = debug_read_word((uint16_t)(a + 2), NULL);
+        snprintf(opcodes, sizeof(opcodes), "%06o %06o",
+                 w0 < 0 ? 0 : w0, w1 < 0 ? 0 : w1);
+    } else {
+        int w1 = debug_read_word((uint16_t)(a + 2), NULL);
+        int w2 = debug_read_word((uint16_t)(a + 4), NULL);
+        snprintf(opcodes, sizeof(opcodes), "%06o %06o %06o",
+                 w0 < 0 ? 0 : w0, w1 < 0 ? 0 : w1,
+                 w2 < 0 ? 0 : w2);
+    }
+    fprintf(stderr, "  %06o: %-20s %s\r\n", a, opcodes, disasm_buf);
+    return nbytes;
+}
+
+static void debug_help(void) {
+    fprintf(stderr,
+        "  n [n]                   next n instructions (default 1)\r\n"
+        "  s [n]                   single-step n micro-instructions (default 1)\r\n"
+        "  g                       go (resume execution)\r\n"
+        "  b <addr>                set a breakpoint (octal)\r\n"
+        "  bl                      list breakpoints\r\n"
+        "  bd <n>                  delete breakpoint n\r\n"
+        "  u [addr] [n]            unassemble (default PC, 16 instructions)\r\n"
+        "  c [addr] [n] [@file]    core dump (default PC, 32 words)\r\n"
+        "  r                       registers\r\n"
+        "  mmu                     MMU state (SR0, PAR/PDR)\r\n"
+        "  save <file>             save RAM to a binary file\r\n"
+        "  q                       back to the program or the console\r\n"
+        "\r\n"
+        "  Enter repeats n and s.\r\n"
+        "\r\n"
+        "  (Ctrl-E debugger, Ctrl-L logic analyzer)\r\n"
+        "\r\n");
+}
+
 static void debug_cli(void) {
     fprintf(stderr, "\r\nDebug console (? for help)\r\n");
 
     char line[256];
     char *tok[16];
     for (;;) {
-        fprintf(stderr, "debug> ");
+        static char prompt[32];
+        snprintf(prompt, sizeof prompt, "debug |PC=%06o|> ", PC(&m.cpu));
+        cli_prompt = prompt;
+        cli_help = debug_help;
+        cli_immediate = "qgr";
+        cli_self = DEBUG_CHAR;
+        fprintf(stderr, "%s", prompt);
         int len = probe_readline(line, sizeof(line));
         if (len < 0) return;  /* Ctrl-C */
-        if (len == 0) continue;
+        static char last[256];                /* Enter repeats n or s */
+        if (len == 0 && last[0]) snprintf(line, sizeof line, "%s", last);
+        else if (len == 0) continue;
+        else last[0] = '\0';
+        if ((line[0] == 'n' || line[0] == 's') && (line[1] == '\0' || line[1] == ' '))
+            snprintf(last, sizeof last, "%s", line);
 
         int ntok = tokenize(line, tok, 16);
         if (ntok == 0) continue;
@@ -798,19 +1040,31 @@ static void debug_cli(void) {
             m.cpu.halted = 0;
             return;
         }
-        else if (strcmp(tok[0], "?") == 0 || strcmp(tok[0], "help") == 0) {
-            fprintf(stderr,
-                "  s [n]            Single-step n micro-instructions (default: 1)\r\n"
-                "  g                Go (resume execution)\r\n"
-                "  b addr           Set breakpoint at address (octal)\r\n"
-                "  bl               List breakpoints\r\n"
-                "  bd n             Delete breakpoint #n\r\n"
-                "  u [addr] [n]     Unassemble (default: PC, 16 insns)\r\n"
-                "  c [addr] [n] [@file]  Core dump (default: PC, 32 words)\r\n"
-                "  r                Show registers\r\n"
-                "  mmu              Show MMU state (SR0, PAR/PDR)\r\n"
-                "  save <file>      Save RAM to binary file\r\n"
-                "  q                Return to programmer console\r\n");
+        else if (strcmp(tok[0], "?") == 0 || strcmp(tok[0], "h") == 0 || strcmp(tok[0], "help") == 0) {
+            debug_help();
+        }
+        else if (strcmp(tok[0], "n") == 0) {
+            int count = ntok >= 2 ? atoi(tok[1]) : 1;
+            if (count < 1) count = 1;
+            if (count > 4096) count = 4096;
+            for (int i = 0; i < count; i++) {
+                debug_print_insn(PC(&m.cpu));
+                machine_step(&m, 1);                  /* devices run too */
+                MachineStop st = machine_run(&m, 100000000ULL);
+                if (st == MACHINE_STOP_HALT) {
+                    fprintf(stderr, "  CPU halted\r\n");
+                    break;
+                }
+                if (st != MACHINE_STOP_STEP && st != MACHINE_STOP_BREAKPOINT) {
+                    machine_halt(&m);
+                    fprintf(stderr, "  instruction not finished after 100 ms (WAIT?)\r\n");
+                    break;
+                }
+            }
+            m.cpu.halted = 1;
+            fprintf(stderr, "  R0=%06o R1=%06o R2=%06o R3=%06o R4=%06o R5=%06o SP=%06o PSW=%06o\r\n",
+                    REG(&m.cpu, 0), REG(&m.cpu, 1), REG(&m.cpu, 2), REG(&m.cpu, 3),
+                    REG(&m.cpu, 4), REG(&m.cpu, 5), REG(&m.cpu, 6), m.cpu.psw);
         }
         else if (strcmp(tok[0], "s") == 0) {
             int count = 1;
@@ -850,9 +1104,12 @@ static void debug_cli(void) {
             }
             m.cpu.halted = 1;
         }
-        else if (strcmp(tok[0], "b") == 0 && ntok >= 2) {
-            unsigned int addr = 0;
-            sscanf(tok[1], "%o", &addr);
+        else if (strcmp(tok[0], "b") == 0) {
+            uint32_t addr = ntok >= 2 ? parse_octal(tok[1]) : (uint32_t)-1;
+            if (addr > 0xFFFF || (addr & 1)) {
+                fprintf(stderr, "  usage: b <address> (octal, even)\r\n");
+                continue;
+            }
             int slot = machine_bp_set(&m, (uint16_t)addr);
             if (slot < 0)
                 fprintf(stderr, "  max breakpoints reached (%d)\r\n", MACHINE_MAX_BP);
@@ -869,7 +1126,11 @@ static void debug_cli(void) {
             }
             if (!found) fprintf(stderr, "  no breakpoints set\r\n");
         }
-        else if (strcmp(tok[0], "bd") == 0 && ntok >= 2) {
+        else if (strcmp(tok[0], "bd") == 0) {
+            if (ntok < 2) {
+                fprintf(stderr, "  usage: bd <n> (bl lists the breakpoints)\r\n");
+                continue;
+            }
             int idx = atoi(tok[1]);
             if (machine_bp_del(&m, idx) == 0) {
                 fprintf(stderr, "  breakpoint #%d deleted\r\n", idx);
@@ -890,29 +1151,8 @@ static void debug_cli(void) {
             if (count > 256) count = 256;
 
             uint16_t a = (uint16_t)addr;
-            for (int i = 0; i < count; i++) {
-                char disasm_buf[80];
-                int nbytes = pdp11_disasm(a, debug_read_word, NULL,
-                                          disasm_buf, sizeof(disasm_buf));
-                int w0 = debug_read_word(a, NULL);
-                char opcodes[40];
-                if (nbytes == 2)
-                    snprintf(opcodes, sizeof(opcodes), "%06o",
-                             w0 < 0 ? 0 : w0);
-                else if (nbytes == 4) {
-                    int w1 = debug_read_word((uint16_t)(a + 2), NULL);
-                    snprintf(opcodes, sizeof(opcodes), "%06o %06o",
-                             w0 < 0 ? 0 : w0, w1 < 0 ? 0 : w1);
-                } else {
-                    int w1 = debug_read_word((uint16_t)(a + 2), NULL);
-                    int w2 = debug_read_word((uint16_t)(a + 4), NULL);
-                    snprintf(opcodes, sizeof(opcodes), "%06o %06o %06o",
-                             w0 < 0 ? 0 : w0, w1 < 0 ? 0 : w1,
-                             w2 < 0 ? 0 : w2);
-                }
-                fprintf(stderr, "  %06o: %-20s %s\r\n", a, opcodes, disasm_buf);
-                a = (uint16_t)(a + nbytes);
-            }
+            for (int i = 0; i < count; i++)
+                a = (uint16_t)(a + debug_print_insn(a));
         }
         else if (strcmp(tok[0], "c") == 0) {
             unsigned int addr;
@@ -982,190 +1222,234 @@ static void debug_cli(void) {
     }
 }
 
+/* One logic analyzer command. Returns 1 for q. */
+static int probe_exec(const char *line_in) {
+    char line[256];
+    char *tok[16];
+    snprintf(line, sizeof line, "%s", line_in);
+    char raw[256], *rest;
+    snprintf(raw, sizeof raw, "%s", line);
+    rest = raw;
+    while (*rest == ' ') rest++;
+    while (*rest && *rest != ' ') rest++;          /* after the command */
+    while (*rest == ' ') rest++;
+    int ntok = tokenize(line, tok, 16);
+    if (ntok == 0) return 0;
+
+    if (strcmp(tok[0], "q") == 0 || strcmp(tok[0], "quit") == 0) {
+        return 1;
+    }
+    else if (strcmp(tok[0], "?") == 0 || strcmp(tok[0], "h") == 0 || strcmp(tok[0], "help") == 0) {
+        probe_help();
+    }
+    else if (strcmp(tok[0], "list") == 0) {
+        probe_cmd_list(rest);
+    }
+    else if (strcmp(tok[0], "find") == 0) {
+        if (*rest) probe_cmd_find(rest);
+        else fprintf(stderr, "  usage: find <text>\r\n");
+    }
+    else if (strcmp(tok[0], "add") == 0) {
+        if (*rest) probe_cmd_add_rm(rest, 1);
+        else fprintf(stderr, "  usage: add <signal>[, <signal>...] (list or find to see them)\r\n");
+    }
+    else if (strcmp(tok[0], "rm") == 0) {
+        if (*rest) probe_cmd_add_rm(rest, 0);
+        else fprintf(stderr, "  usage: rm <signal>[, <signal>...]\r\n");
+    }
+    else if (strcmp(tok[0], "clear") == 0) {
+        probe_clear_signals(&probe);
+        fprintf(stderr, "  signals cleared\r\n");
+    }
+    else if (strcmp(tok[0], "trigger") == 0) {
+        probe_cmd_trigger(rest);
+    }
+    else if (strcmp(tok[0], "depth") == 0) {
+        if (ntok >= 2) {
+            char *end;
+            unsigned long requested = strtoul(tok[1], &end, 10);
+            if (tok[1][0] == '-' || *end || requested == 0) {
+                fprintf(stderr, "  depth: positive sample count required\r\n");
+                return 0;
+            }
+            if (probe.state == PROBE_ARMED || probe.state == PROBE_CAPTURING) {
+                fprintf(stderr, "  depth: disarm the capture first\r\n");
+                return 0;
+            }
+            if (requested > PROBE_MAX_DEPTH) requested = PROBE_MAX_DEPTH;
+            uint32_t d = 1;
+            while (d * 2 <= requested) d *= 2;
+            if (d != probe.capacity) {
+                ProbeSnapshot *buf = realloc(probe_buf, (size_t)d * sizeof(*buf));
+                if (!buf) {
+                    fprintf(stderr, "  depth: cannot allocate %u samples\r\n", d);
+                    return 0;
+                }
+                probe_buf = buf;
+                probe.buf = buf;
+                probe.capacity = d;
+            }
+            probe_set_depth(&probe, d);
+        }
+        fprintf(stderr, "  depth: %u samples\r\n", probe.depth);
+    }
+    else if (strcmp(tok[0], "pos") == 0) {
+        if (ntok >= 2) {
+            int pct = atoi(tok[1]);
+            probe_set_trigger_pos(&probe, pct);
+            fprintf(stderr, "  trigger position: %d%%\r\n", probe.trigger_pos_pct);
+        } else {
+            fprintf(stderr, "  trigger position: %d%%\r\n", probe.trigger_pos_pct);
+        }
+    }
+    else if (strcmp(tok[0], "rate") == 0) {
+        if (ntok >= 2) {
+            uint32_t d = (uint32_t)atoi(tok[1]);
+            if (d < 1) d = 1;
+            probe.divider = d;
+        }
+        uint32_t sr = 1000000000u / (clock_timing(m.cpu.timing)->short_ns * probe.divider);
+        if (probe.divider == 1)
+            fprintf(stderr, "  sample rate: %s Hz (realtime CPU clock)\r\n", fmt_comma(sr));
+        else
+            fprintf(stderr, "  sample rate: %s Hz (1:%u divider)\r\n", fmt_comma(sr), probe.divider);
+    }
+    else if (strcmp(tok[0], "arm") == 0) {
+        if (probe.nsignals == 0) {
+            fprintf(stderr, "  no signals selected (use 'add' first)\r\n");
+        } else {
+            probe_arm(&probe);
+            probe_notified = 0;
+            m.cpu.probe = &probe;
+            fprintf(stderr, "  armed (%u samples, trigger %s)\r\n",
+                    probe.depth,
+                    probe.trigger_signal >= 0 ? "set" : "free-run");
+            fprintf(stderr, "  the capture runs with the CPU (q or g resumes it)\r\n");
+        }
+    }
+    else if (strcmp(tok[0], "disarm") == 0) {
+        probe_disarm(&probe);
+        m.cpu.probe = NULL;
+        fprintf(stderr, "  disarmed\r\n");
+    }
+    else if (strcmp(tok[0], "status") == 0) {
+        const char *states[] = {"IDLE", "ARMED", "CAPTURING", "DONE"};
+        fprintf(stderr, "  state: %s\r\n", states[probe.state]);
+        fprintf(stderr, "  signals: %d, depth: %u, samples: %u\r\n",
+                probe.nsignals, probe.depth, probe.count);
+        if (probe.trigger_signal >= 0) {
+            const ProbeDef *td = probe_def_get(probe.trigger_signal);
+            fprintf(stderr, "  trigger: %s == %o (mask %o) pos %d%%\r\n",
+                    probe_display_name(td),
+                    probe.trigger_value, probe.trigger_mask,
+                    probe.trigger_pos_pct);
+        }
+        if (probe.nsignals > 0) {
+            fprintf(stderr, "  channels:");
+            for (int i = 0; i < probe.nsignals; i++) {
+                const ProbeDef *d = probe_def_get(probe.signal_idx[i]);
+                fprintf(stderr, " %s", probe_display_name(d));
+            }
+            fprintf(stderr, "\r\n");
+        }
+        uint32_t sr = 1000000000u / (clock_timing(m.cpu.timing)->short_ns * probe.divider);
+        if (probe.divider == 1)
+            fprintf(stderr, "  sample rate: %s Hz (realtime CPU clock)\r\n", fmt_comma(sr));
+        else
+            fprintf(stderr, "  sample rate: %s Hz (1:%u divider)\r\n", fmt_comma(sr), probe.divider);
+    }
+    else if (strcmp(tok[0], "show") == 0) {
+        probe_cmd_show(&probe, 20, ntok, tok);
+    }
+    else if (strcmp(tok[0], "export") == 0) {
+        size_t fl = ntok >= 2 ? strlen(tok[1]) : 0;
+        int sr = fl > 3 && !strcasecmp(tok[1] + fl - 3, ".sr");
+        int vcd = fl > 4 && !strcasecmp(tok[1] + fl - 4, ".vcd");
+        char err[400];
+        if (!sr && !vcd) {
+            fprintf(stderr, "  usage: export <file.vcd> or export <file.sr> [MHz]\r\n");
+        } else if (probe.count == 0) {
+            fprintf(stderr, "  no data captured\r\n");
+        } else if (sr) {
+            uint32_t mhz = ntok >= 3 ? (uint32_t)atoi(tok[2]) : 50;
+            int n = -1;                           /* 40 ns clock pulse */
+            if (mhz < 25 || mhz > 1000)
+                snprintf(err, sizeof err, "sample rate 25 to 1000 MHz, 50 by default");
+            else
+                n = probe_export_sr(&probe, tok[1], mhz * 1000000u, err, sizeof err);
+            if (n >= 0)
+                fprintf(stderr, "  wrote %d samples at %u MHz to %s\r\n", n, mhz, tok[1]);
+            else
+                fprintf(stderr, "  %s\r\n", err);
+        } else {
+            int n = probe_export_vcd(&probe, tok[1], err, sizeof err);
+            if (n >= 0)
+                fprintf(stderr, "  wrote %d micro-cycles to %s\r\n", n, tok[1]);
+            else
+                fprintf(stderr, "  %s\r\n", err);
+        }
+    }
+    else {
+        fprintf(stderr, "  unknown command: %s (? for help)\r\n", tok[0]);
+    }
+    return 0;
+}
+
 static void probe_cli(void) {
     fprintf(stderr, "\r\nLogic analyzer (? for help)\r\n");
 
     char line[256];
-    char *tok[16];
     for (;;) {
-        fprintf(stderr, "probe> ");
+        static const char *states[] = {"IDLE", "ARMED", "CAPTURING", "DONE"};
+        static char prompt[64];
+        snprintf(prompt, sizeof prompt, "probe |%s, %d signal%s|> ", states[probe.state],
+                 probe.nsignals, probe.nsignals == 1 ? "" : "s");
+        cli_prompt = prompt;
+        cli_help = probe_help;
+        cli_immediate = "q";
+        cli_self = PROBE_CHAR;
+        fprintf(stderr, "%s", prompt);
         int len = probe_readline(line, sizeof(line));
         if (len < 0) return;  /* Ctrl-C */
         if (len == 0) continue;
 
-        int ntok = tokenize(line, tok, 16);
-        if (ntok == 0) continue;
-
-        if (strcmp(tok[0], "q") == 0 || strcmp(tok[0], "quit") == 0) {
+        if (probe_exec(line))
             return;
-        }
-        else if (strcmp(tok[0], "?") == 0 || strcmp(tok[0], "help") == 0) {
-            fprintf(stderr,
-                "  list [chip]          List available signals\r\n"
-                "  add <sig> [sig...]   Add signals (chip-pin or alias)\r\n"
-                "  rm <sig> [sig...]    Remove signals\r\n"
-                "  clear                Remove all signals\r\n"
-                "  trigger <sig> <val> [mask]  Set trigger (octal values)\r\n"
-                "  depth <n>            Buffer depth (power of 2, max 65536)\r\n"
-                "  rate [n]             Sample divider (1=every ustep, 10=1:10)\r\n"
-                "  pos <pct>            Trigger position (0=start, 50=center, 100=end)\r\n"
-                "  arm                  Arm capture\r\n"
-                "  disarm               Disarm\r\n"
-                "  status               Show current state\r\n"
-                "  show [N|all]         Show captured data (default: 20 lines)\r\n"
-                "  dump <file>          Export to CSV\r\n"
-                "  q                    Return to console\r\n");
-        }
-        else if (strcmp(tok[0], "list") == 0) {
-            probe_cmd_list(ntok, tok);
-        }
-        else if (strcmp(tok[0], "add") == 0) {
-            int added = 0;
-            for (int i = 1; i < ntok; i++) {
-                /* Handle ranges: KD1:E60:1-5 */
-                char *dash = strchr(tok[i], '-');
-                char *last_colon = strrchr(tok[i], ':');
-                if (dash && last_colon && dash > last_colon) {
-                    /* Pin range: extract prefix and range */
-                    int pin_start = atoi(last_colon + 1);
-                    int pin_end = atoi(dash + 1);
-                    char prefix[64];
-                    int plen = (int)(last_colon - tok[i]) + 1;
-                    if (plen < (int)sizeof(prefix)) {
-                        memcpy(prefix, tok[i], plen);
-                        for (int pin = pin_start; pin <= pin_end; pin++) {
-                            char name[80];
-                            snprintf(name, sizeof(name), "%.*s%d", plen, prefix, pin);
-                            if (probe_add_signal(&probe, name) == 0)
-                                added++;
-                        }
-                    }
-                } else {
-                    if (probe_add_signal(&probe, tok[i]) == 0)
-                        added++;
-                    else
-                        fprintf(stderr, "  unknown signal: %s\r\n", tok[i]);
-                }
-            }
-            if (added > 0)
-                fprintf(stderr, "  %d signal%s added (%d total)\r\n",
-                        added, added > 1 ? "s" : "", probe.nsignals);
-        }
-        else if (strcmp(tok[0], "rm") == 0) {
-            for (int i = 1; i < ntok; i++)
-                probe_rm_signal(&probe, tok[i]);
-            fprintf(stderr, "  %d signals remaining\r\n", probe.nsignals);
-        }
-        else if (strcmp(tok[0], "clear") == 0) {
-            probe_clear_signals(&probe);
-            fprintf(stderr, "  signals cleared\r\n");
-        }
-        else if (strcmp(tok[0], "trigger") == 0) {
-            if (ntok < 3) {
-                fprintf(stderr, "  usage: trigger <signal> <value> [mask]\r\n");
-            } else {
-                uint32_t val = parse_octal(tok[2]);
-                uint32_t mask = (ntok >= 4) ? parse_octal(tok[3]) : 0xFFFFFFFF;
-                if (probe_set_trigger(&probe, tok[1], val, mask) == 0)
-                    fprintf(stderr, "  trigger: %s == %o (mask %o)\r\n",
-                            tok[1], val, mask);
-                else
-                    fprintf(stderr, "  unknown signal: %s\r\n", tok[1]);
-            }
-        }
-        else if (strcmp(tok[0], "depth") == 0) {
-            if (ntok >= 2) {
-                uint32_t d = (uint32_t)atoi(tok[1]);
-                probe_set_depth(&probe, d);
-                fprintf(stderr, "  depth: %u samples\r\n", probe.depth);
-            } else {
-                fprintf(stderr, "  depth: %u samples\r\n", probe.depth);
-            }
-        }
-        else if (strcmp(tok[0], "pos") == 0) {
-            if (ntok >= 2) {
-                int pct = atoi(tok[1]);
-                probe_set_trigger_pos(&probe, pct);
-                fprintf(stderr, "  trigger position: %d%%\r\n", probe.trigger_pos_pct);
-            } else {
-                fprintf(stderr, "  trigger position: %d%%\r\n", probe.trigger_pos_pct);
-            }
-        }
-        else if (strcmp(tok[0], "rate") == 0) {
-            if (ntok >= 2) {
-                uint32_t d = (uint32_t)atoi(tok[1]);
-                if (d < 1) d = 1;
-                probe.divider = d;
-            }
-            uint32_t sr = 1000000000u / (CYCLE_SHORT_NS * probe.divider);
-            if (probe.divider == 1)
-                fprintf(stderr, "  sample rate: %s Hz (realtime CPU clock)\r\n", fmt_comma(sr));
-            else
-                fprintf(stderr, "  sample rate: %s Hz (1:%u divider)\r\n", fmt_comma(sr), probe.divider);
-        }
-        else if (strcmp(tok[0], "arm") == 0) {
-            if (probe.nsignals == 0) {
-                fprintf(stderr, "  no signals selected (use 'add' first)\r\n");
-            } else {
-                probe_arm(&probe);
-                probe_notified = 0;
-                m.cpu.probe = &probe;
-                fprintf(stderr, "  armed (%u samples, trigger %s)\r\n",
-                        probe.depth,
-                        probe.trigger_signal >= 0 ? "set" : "free-run");
-                fprintf(stderr, "  resume CPU (c/s from console) to start capture\r\n");
-            }
-        }
-        else if (strcmp(tok[0], "disarm") == 0) {
-            probe_disarm(&probe);
-            m.cpu.probe = NULL;
-            fprintf(stderr, "  disarmed\r\n");
-        }
-        else if (strcmp(tok[0], "status") == 0) {
-            const char *states[] = {"IDLE", "ARMED", "CAPTURING", "DONE"};
-            fprintf(stderr, "  state: %s\r\n", states[probe.state]);
-            fprintf(stderr, "  signals: %d, depth: %u, samples: %u\r\n",
-                    probe.nsignals, probe.depth, probe.count);
-            if (probe.trigger_signal >= 0) {
-                const ProbeDef *td = probe_def_get(probe.trigger_signal);
-                fprintf(stderr, "  trigger: %s == %o (mask %o) pos %d%%\r\n",
-                        probe_display_name(td),
-                        probe.trigger_value, probe.trigger_mask,
-                        probe.trigger_pos_pct);
-            }
-            if (probe.nsignals > 0) {
-                fprintf(stderr, "  channels:");
-                for (int i = 0; i < probe.nsignals; i++) {
-                    const ProbeDef *d = probe_def_get(probe.signal_idx[i]);
-                    fprintf(stderr, " %s", probe_display_name(d));
-                }
-                fprintf(stderr, "\r\n");
-            }
-            uint32_t sr = 1000000000u / (CYCLE_SHORT_NS * probe.divider);
-            if (probe.divider == 1)
-                fprintf(stderr, "  sample rate: %s Hz (realtime CPU clock)\r\n", fmt_comma(sr));
-            else
-                fprintf(stderr, "  sample rate: %s Hz (1:%u divider)\r\n", fmt_comma(sr), probe.divider);
-        }
-        else if (strcmp(tok[0], "show") == 0) {
-            probe_cmd_show(&probe, 20, ntok, tok);
-        }
-        else if (strcmp(tok[0], "dump") == 0) {
-            if (ntok < 2) {
-                fprintf(stderr, "  usage: dump <filename.csv>\r\n");
-            } else if (probe.count == 0) {
-                fprintf(stderr, "  no data captured\r\n");
-            } else {
-                int n = probe_dump_csv(&probe, tok[1]);
-                if (n >= 0)
-                    fprintf(stderr, "  wrote %d samples to %s\r\n", n, tok[1]);
-                else
-                    fprintf(stderr, "  error writing %s\r\n", tok[1]);
-            }
-        }
-        else {
-            fprintf(stderr, "  unknown command: %s (? for help)\r\n", tok[0]);
-        }
+    }
+}
+
+/* Probe script (--probe): analyzer commands, one per line, # comments.
+ * A line waits while a capture is armed or running, so what follows arm
+ * runs once the capture is done. exit leaves ll-34. */
+static char probe_script[256][256];
+static int probe_script_n, probe_script_pos, probe_script_exit;
+
+static int probe_script_load(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) { perror(path); return -1; }
+    char line[256];
+    while (fgets(line, sizeof line, f) && probe_script_n < 256) {
+        char *c = strchr(line, '#');
+        if (c) *c = '\0';
+        char *e = line + strlen(line);
+        while (e > line && isspace((unsigned char)e[-1])) *--e = '\0';
+        char *b = line;
+        while (isspace((unsigned char)*b)) b++;
+        if (*b) snprintf(probe_script[probe_script_n++], sizeof probe_script[0], "%s", b);
+    }
+    fclose(f);
+    return 0;
+}
+
+static void probe_script_run(void) {
+    while (probe_script_pos < probe_script_n) {
+        if (probe.state == PROBE_ARMED || probe.state == PROBE_CAPTURING)
+            return;
+        const char *line = probe_script[probe_script_pos++];
+        term_colour(0);
+        fprintf(stderr, "probe> %s\r\n", line);
+        if (!strcmp(line, "exit")) { probe_script_exit = 1; return; }
+        probe_exec(line);
     }
 }
 
@@ -1193,23 +1477,58 @@ static int cli_host_tick(void *ctx) {
 
 static void usage(const char *prog) {
     fprintf(stderr, "Usage: %s [options]\n", prog);
-    fprintf(stderr, "  --load FILE   Load program (obj2bin --ascii format)\n");
-    fprintf(stderr, "  --lda FILE    Load program (DEC absolute loader .lda/.bin)\n");
-    fprintf(stderr, "  --rom FILE    Override built-in M9301-YF ROM\n");
-    fprintf(stderr, "  --rk FILE     Attach RK05 disk image (repeatable, up to 8 drives)\n");
-    fprintf(stderr, "  --rl FILE     Attach RL01/RL02 disk image (repeatable, up to 4 drives)\n");
-    fprintf(stderr, "  --s1 OCTAL    S1 switch setting (default: 0, boot to ODT)\n");
-    fprintf(stderr, "  --mem KB      Memory size in KB (default: 248, max: 248)\n");
+    fprintf(stderr, "Load options:\n");
+    fprintf(stderr, "  --load FILE   Load with ASCII deposit commands (obj2bin --ascii format)\n");
+    fprintf(stderr, "  --lda FILE    Load an absolute binary image (DEC absolute loader .lda/.bin)\n");
+    fprintf(stderr, "  --lst FILE    Load program from its MACRO-11 listing, with CPU halted at .END\n");
+    fprintf(stderr, "  --start ADDR  Start the CPU at ADDR (octal), as the front panel START\n");
     fprintf(stderr, "  --ptr FILE    Paper tape reader input (binary)\n");
     fprintf(stderr, "  --ptp FILE    Paper tape punch output\n");
+    fprintf(stderr, "  --rk FILE     Attach RK05 disk image (up to 8 drives)\n");
+    fprintf(stderr, "  --rl FILE     Attach RL01/RL02 disk image (up to 4 drives)\n");
     fprintf(stderr, "  --rw          Write to original disk images instead of /tmp snapshots (dangerous)\n");
+    fprintf(stderr, "Boot options:\n");
+    fprintf(stderr, "  --rom FILE    Override boot ROM (default: M9301-YF)\n");
+    fprintf(stderr, "  --s1 OCTAL    M9301 S1 switch setting (default: 0, boot to console emulator)\n");
+    fprintf(stderr, "Machine configuration:\n");
+    fprintf(stderr, "  --mem KB      Memory size in KB (default: 248, max: 248)\n");
+    fprintf(stderr, "  --timing NAME nominal (DEC factory values, default) or aged (reference hardware from 1978)\n");
+    fprintf(stderr, "  --rtc HZ      Line clock frequency, 50 or 60 (default: 60)\n");
+    fprintf(stderr, "  --unpaced     Run as fast as the host allows, not at the real speed\n");
     fprintf(stderr, "  --tty MODE    DL11 serial backend: stdio (default), tcp[:port=1134], pty\n");
-    fprintf(stderr, "\nCtrl-P = console, Ctrl-E = debugger, Ctrl-L = logic analyzer\n");
+    fprintf(stderr, "  --probe FILE  Run logic analyzer commands from FILE\n");
+}
+
+/* Run the debugger or the logic analyzer, then whichever console the user
+ * asks for with Ctrl-E or Ctrl-L. Ctrl-P ends in the programmer console.
+ * q goes back to where the user was: the running program if resume is set,
+ * otherwise the programmer console */
+static void open_consoles(int mode, int resume) {
+    term_colour(0);
+    for (;;) {
+        next_mode = 0;
+        if (mode == DEBUG_CHAR)
+            debug_cli();
+        else if (mode == PROBE_CHAR)
+            probe_cli();
+        else
+            break;
+        if (!next_mode && resume && m.cpu.halted) {
+            m.cpu.halted = 0;
+            fprintf(stderr, "ll-34: resumed\r\n");
+        }
+        if (!next_mode || !m.cpu.halted)
+            break;
+        mode = next_mode;
+    }
 }
 
 int main(int argc, char **argv) {
     const char *rom_file = NULL;
     const char *load_file = NULL;
+    const char *lst_file = NULL;
+    const char *probe_file = NULL;
+    uint32_t start_opt = (uint32_t)-1;
     const char *lda_file = NULL;
     const char *rk_files[RK_NUMDR] = {0};
     int rk_ndisks = 0;
@@ -1221,6 +1540,8 @@ int main(int argc, char **argv) {
     unsigned int s1_val = 0;
     unsigned int mem_kb = 248;  /* default: 248KB (256K - 8K I/O page), native 18-bit */
     int rk_raw_rw = 0;
+    TimingKind timing = TIMING_NOMINAL;
+    unsigned rtc_hz = 60;
 
     /* Parse arguments */
     for (int i = 1; i < argc; i++) {
@@ -1228,6 +1549,16 @@ int main(int argc, char **argv) {
             rom_file = argv[++i];
         } else if (strcmp(argv[i], "--load") == 0 && i + 1 < argc) {
             load_file = argv[++i];
+        } else if (strcmp(argv[i], "--lst") == 0 && i + 1 < argc) {
+            lst_file = argv[++i];
+        } else if (strcmp(argv[i], "--probe") == 0 && i + 1 < argc) {
+            probe_file = argv[++i];
+        } else if (strcmp(argv[i], "--start") == 0 && i + 1 < argc) {
+            start_opt = parse_octal(argv[++i]);
+            if (start_opt > 0xFFFF || (start_opt & 1)) {
+                fprintf(stderr, "--start: even octal address\n");
+                return 1;
+            }
         } else if (strcmp(argv[i], "--lda") == 0 && i + 1 < argc) {
             lda_file = argv[++i];
         } else if (strcmp(argv[i], "--rk") == 0 && i + 1 < argc) {
@@ -1250,6 +1581,16 @@ int main(int argc, char **argv) {
             sscanf(argv[++i], "%o", &s1_val);
         } else if (strcmp(argv[i], "--mem") == 0 && i + 1 < argc) {
             mem_kb = (unsigned int)atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--timing") == 0 && i + 1 < argc) {
+            const char *name = argv[++i];
+            if (strcmp(name, "nominal") == 0) timing = TIMING_NOMINAL;
+            else if (strcmp(name, "aged") == 0) timing = TIMING_AGED;
+            else { fprintf(stderr, "Unknown timing profile: %s (nominal or aged)\n", name); return 1; }
+        } else if (strcmp(argv[i], "--rtc") == 0 && i + 1 < argc) {
+            rtc_hz = (unsigned)atoi(argv[++i]);
+            if (rtc_hz != 50 && rtc_hz != 60) { fprintf(stderr, "--rtc: 50 or 60\n"); return 1; }
+        } else if (strcmp(argv[i], "--unpaced") == 0) {
+            unpaced = 1;
         } else if (strcmp(argv[i], "--rw") == 0) {
             rk_raw_rw = 1;
         } else if (strcmp(argv[i], "--tty") == 0 && i + 1 < argc) {
@@ -1264,10 +1605,12 @@ int main(int argc, char **argv) {
         }
     }
 
-    MachineConfig cfg = { .mem_kb = mem_kb };
+    MachineConfig cfg = { .mem_kb = mem_kb, .timing = timing, .rtc_hz = rtc_hz };
     if (machine_init(&m, &cfg) < 0)
         return 1;
+    fprintf(stderr, "ll-34 %s, PDP-11/34A\n", LL34_VERSION);
     fprintf(stderr, "ll-34: %uKB RAM (%u words)\n", mem_kb, m.ram.size_words);
+    fprintf(stderr, "ll-34: timing %s\n", m.cpu.timing->name);
 
     if (rom_file) {
         int nwords = rom_load_mac(&m.rom, rom_file);
@@ -1367,7 +1710,7 @@ int main(int argc, char **argv) {
     /* Make sure the host is fast enough to run ll-34 */
     {
         double ns_per = machine_benchmark(&m, s1_val);
-        double ratio = (double)CYCLE_SHORT_NS / ns_per;
+        double ratio = (double)clock_timing(m.cpu.timing)->short_ns / ns_per;
         if (ratio >= 1.0)
             fprintf(stderr, "ll-34: host can emulate %.1fx real KD11-EA: speed OK\n", ratio);
         else
@@ -1415,6 +1758,21 @@ int main(int argc, char **argv) {
                 nbytes, lda_file, load_start);
     }
 
+    int lst_has_start = 0;
+    uint16_t lst_start = 0;
+    if (lst_file) {
+        uint16_t lo, hi;
+        int nwords = loader_lst(&m.ram, lst_file, &lst_start, &lst_has_start, &lo, &hi);
+        if (nwords < 0)
+            return 1;
+        fprintf(stderr, "ll-34: loaded %d words from %s (%06o-%06o)", nwords, lst_file, lo, hi);
+        if (lst_has_start) fprintf(stderr, ", .END %06o", lst_start);
+        fprintf(stderr, "\n");
+        if (!lst_has_start) lst_start = lo;
+    }
+    if (probe_file && probe_script_load(probe_file) < 0)
+        return 1;
+
     probe_buf = calloc(PROBE_DEFAULT_DEPTH, sizeof(ProbeSnapshot));
     if (!probe_buf) {
         fprintf(stderr, "ll-34: cannot allocate probe buffer\n");
@@ -1422,7 +1780,20 @@ int main(int argc, char **argv) {
     }
     probe_init(&probe, probe_buf, PROBE_DEFAULT_DEPTH);
 
-    if (load_file || lda_file) {
+    int halted_at_start = 0;
+    if (start_opt <= 0xFFFF) {                    /* LAD, CNTRL-START */
+        m.cpu.halted = 1;
+        console_set_addr(&m.con, (uint16_t)start_opt);
+        console_key(&m.con, KEY_CNTRL);
+        console_key(&m.con, KEY_START);
+        m.con.init_requested = 0;
+        machine_bus_init(&m);
+        fprintf(stderr, "ll-34: START at %06o\n", (unsigned)start_opt);
+    } else if (lst_file) {                        /* loaded, the operator starts */
+        PC(&m.cpu) = lst_start;
+        m.cpu.halted = 1;
+        halted_at_start = 1;
+    } else if (load_file || lda_file) {
         PC(&m.cpu) = load_start;
         m.cpu.psw = 0;
         m.cpu.mpc = 0;
@@ -1497,10 +1868,20 @@ int main(int argc, char **argv) {
 
     m.host_tick = cli_host_tick;
 
+    probe_script_run();
+    if (halted_at_start)
+        enter_console_mode("CPU halted");
+
     int quit_requested = 0;
-    while (!got_sigterm && !quit_requested) {
+    while (!got_sigterm && !quit_requested && !probe_script_exit) {
+        if (probe_script_pos < probe_script_n)
+            probe_script_run();
         if (!m.cpu.halted) {
+            term_colour(1);                        /* emulated terminal */
             MachineStop stop = machine_run(&m, CLI_SLICE_NS);
+            if (stop != MACHINE_STOP_BUDGET || halt_requested || debug_requested ||
+                probe_requested || (probe.state == PROBE_DONE && !probe_notified))
+                term_colour(0);                    /* ll-34 speaks */
 
             if (stop == MACHINE_STOP_HALT || stop == MACHINE_STOP_STEP) {
                 enter_console_mode("CPU halted");
@@ -1510,39 +1891,40 @@ int main(int argc, char **argv) {
             if (stop == MACHINE_STOP_BREAKPOINT) {
                 fprintf(stderr, "\r\nll-34: breakpoint #%d at PC=%06o\r\n",
                         m.bp_hit, PC(&m.cpu));
-                debug_cli();
+                open_consoles(DEBUG_CHAR, 0);
                 if (!m.cpu.halted)
                     clock_init(&clk, m.cpu.ns_elapsed);
                 else
-                    enter_console_mode("debug console closed");
+                    enter_console_mode(NULL);
                 continue;
             }
 
-            if (halt_requested) {
+            if (halt_requested && !m.host_stop) {       /* at the instruction end */
                 halt_requested = 0;
                 m.cpu.halted = 1;
-                enter_console_mode("halted by operator");
+                enter_console_mode("CPU halted");
             }
 
-            if (debug_requested) {
+            if (debug_requested && !m.host_stop) {       /* at the instruction end */
                 debug_requested = 0;
                 m.cpu.halted = 1;
-                fprintf(stderr, "\r\nll-34: halted at PC=%06o PSW=%06o\r\n",
-                        PC(&m.cpu), m.cpu.psw);
-                debug_cli();
+                fprintf(stderr, "\r\nll-34: suspended at PC=%06o\r\n", PC(&m.cpu));
+                open_consoles(DEBUG_CHAR, 1);
                 if (!m.cpu.halted)
                     clock_init(&clk, m.cpu.ns_elapsed);
                 else
-                    enter_console_mode("debug console closed");
+                    enter_console_mode(NULL);
             }
 
-            if (probe_requested) {
+            if (probe_requested && !m.host_stop) {       /* at the instruction end */
                 probe_requested = 0;
                 m.cpu.halted = 1;
-                fprintf(stderr, "\r\nll-34: halted at PC=%06o PSW=%06o\r\n",
-                        PC(&m.cpu), m.cpu.psw);
-                probe_cli();
-                enter_console_mode("logic analyzer closed");
+                fprintf(stderr, "\r\nll-34: suspended at PC=%06o\r\n", PC(&m.cpu));
+                open_consoles(PROBE_CHAR, 1);
+                if (!m.cpu.halted)
+                    clock_init(&clk, m.cpu.ns_elapsed);
+                else
+                    enter_console_mode(NULL);
             }
 
             if (probe.state == PROBE_DONE && !probe_notified) {
@@ -1551,10 +1933,17 @@ int main(int argc, char **argv) {
                         probe.count < probe.depth ? probe.count : probe.depth);
             }
 
-            clock_pace(&clk, m.cpu.ns_elapsed);
+            if (!unpaced)
+                clock_pace(&clk, m.cpu.ns_elapsed);
         } else {
             console_tick(&m.con);
             if (console_poll() < 0) {
+                quit_requested = 1;
+                break;
+            }
+            /* Halted, and stdin is a file that has ended: nothing can
+             * happen any more. */
+            if (stdin_eof && probe_script_pos >= probe_script_n) {
                 quit_requested = 1;
                 break;
             }
@@ -1573,19 +1962,24 @@ int main(int argc, char **argv) {
                 m.con.init_requested = 0;
                 machine_bus_init(&m);
                 m.con.led_bus_err = 0;
-                fprintf(stderr, "\r\nll-34: BUS INIT\r\n");
-                console_prompt();
+                if (m.cpu.halted) {                /* INIT key, not START */
+                    fprintf(stderr, "\r\nll-34: BUS INIT\r\n");
+                    console_prompt();
+                }
             }
 
             usleep(10000);
 
-            if (!m.cpu.halted) {
-                fprintf(stderr, "\r\nll-34: running\r\n");
+            if (!m.cpu.halted) {                   /* g in the debugger */
+                if (!run_reported)
+                    fprintf(stderr, "\r\nll-34: CONT\r\n");
+                run_reported = 0;
                 clock_init(&clk, m.cpu.ns_elapsed);
             }
         }
     }
 
+    term_colour(0);
     tty->destroy(tty);
     stdin_raw_leave();
     fprintf(stderr, "ll-34: exit at PC=%06o PSW=%06o\n",

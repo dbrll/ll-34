@@ -1,11 +1,6 @@
-/*
- * int.h -- UNIBUS interrupt controller for KD11-EA
- *
- * Models the BR4-BR7 priority arbitration on the UNIBUS.
- * Devices call int_request() to assert an interrupt; the CPU checks
- * int_pending() between instructions and calls int_ack() to service
- * the highest-priority request whose BR level exceeds the CPU priority.
- */
+/* Interrupt requests on BR7-BR4. A device asserts its request with
+ * int_request() and withdraws it with int_cancel(). The CPU takes the
+ * highest request above its priority. */
 
 #ifndef KD11EA_INT_H
 #define KD11EA_INT_H
@@ -16,7 +11,7 @@
 
 typedef struct {
     uint16_t vector;
-    uint8_t  priority;   /* BR level: 4-7 */
+    uint8_t  priority;   /* 4 to 7 */
 } IntRequest;
 
 typedef struct {
@@ -24,22 +19,21 @@ typedef struct {
     int count;
 } IntController;
 
-/* Initialize the interrupt controller (clear all pending requests) */
 void int_init(IntController *ic);
 
-/* Assert an interrupt request. If the same vector is already pending,
- * this is a no-op. Returns 0 on success, -1 if queue is full. */
+/* A vector already pending is not added twice. Returns -1 if the queue
+ * is full. */
 int int_request(IntController *ic, uint16_t vector, uint8_t priority);
-
-/* Cancel a pending interrupt request by vector number. */
 void int_cancel(IntController *ic, uint16_t vector);
 
-/* Check if any pending request has priority > cpu_priority.
- * Returns the index of the highest-priority request, or -1. */
+/* Index of the highest request above cpu_priority, or -1. */
 int int_pending(IntController *ic, uint8_t cpu_priority);
 
-/* Acknowledge the highest-priority interrupt: removes it from the
- * queue and returns it. Only call after int_pending() returned >= 0. */
+/* The BR7-BR4 lines, as bits 7-4. */
+uint8_t int_br_lines(const IntController *ic);
+
+/* Remove the highest request and return it. Call it only after
+ * int_pending() found one. */
 IntRequest int_ack(IntController *ic, uint8_t cpu_priority);
 
-#endif /* KD11EA_INT_H */
+#endif

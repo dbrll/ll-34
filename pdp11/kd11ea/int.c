@@ -37,6 +37,14 @@ void int_cancel(IntController *ic, uint16_t vector) {
     }
 }
 
+uint8_t int_br_lines(const IntController *ic) {
+    uint8_t br = 0;
+    for (int i = 0; i < ic->count; i++)
+        if (ic->queue[i].priority >= 4 && ic->queue[i].priority <= 7)
+            br |= 1u << ic->queue[i].priority;
+    return br;
+}
+
 int int_pending(IntController *ic, uint8_t cpu_priority) {
     uint8_t br = 0;
     for (int i = 0; i < ic->count; i++) {
@@ -47,8 +55,8 @@ int int_pending(IntController *ic, uint8_t cpu_priority) {
     uint8_t d = e29_rom[e29_addr(cpu_priority, 0,
                                   (br >> 7) & 1, (br >> 6) & 1,
                                   (br >> 5) & 1, (br >> 4) & 1)];
-    uint8_t grant = E29_BG7(d) ? 7 : E29_BG6(d) ? 6 :
-                    E29_BG5(d) ? 5 : E29_BG4(d) ? 4 : 0;
+    uint8_t grant = E29_BG7_H(d) ? 7 : E29_BG6_H(d) ? 6 :
+                    E29_BG5_H(d) ? 5 : E29_BG4_H(d) ? 4 : 0;
 
     if (!grant)
         return -1;

@@ -2,13 +2,14 @@
 
 These two folders contain the ROMs from the two CPU boards.
 
-These ROMs are old, fragile, and require specific voltages not supported
-by my TL-866+. Rather than desoldering and handling them unnecessarily, their
-contents were reconstructed from logic analyzer captures and schematic analysis.
+These ROMs are old, fragile, and require specific voltages not supported by my
+TL-866+. Rather than desoldering and handling them unnecessarily, their contents
+were reconstructed from logic analyzer captures and schematic analysis, or
+retrieved from original dumps.
 
 ## M8266 control board
 
-## Microcode (MPC)
+### Microcode (MPC)
 
 | ROM  | Micro-word bits | Function                                     |
 | ---- | --------------- | -------------------------------------------- |
@@ -67,3 +68,4 @@ contents were reconstructed from logic analyzer captures and schematic analysis.
 - Address wiring, active levels and output decoding are documented in `../ucode_rom.h`, `../ucode_labels.h` and `../rom_wiring.h`.
 
 Transcribing the ROM wiring by hand is boring, tedious and error-prone. For this reason, `rom_wiring.h` was generated with an LLM from pinouts traced from the schematics, then validated with truth-table tests.
+See `conformance/README.md` in the root folder.

@@ -12,6 +12,7 @@
 
 void pc11_init(PC11 *pc) {
     memset(pc, 0, sizeof(*pc));
+    pc->init_l = 1;
     pc->pps = PPS_DONE;  /* punch starts ready */
     pc->reader_char_ns = 3333333ULL;   /* 300 chars/sec */
     pc->punch_char_ns = 20000000ULL;  /* 50 chars/sec */
@@ -88,6 +89,7 @@ static void pc11_punch_service(PC11 *pc) {
 }
 
 void pc11_tick(PC11 *pc, uint64_t now_ns) {
+    if (!pc->init_l) return;
     if ((pc->prs & PRS_BUSY) && pc->reader_done_ns > 0
         && now_ns >= pc->reader_done_ns) {
         pc11_reader_service(pc);
@@ -106,7 +108,7 @@ static int pc11_read(void *dev, uint32_t addr, uint16_t *data) {
     switch (reg) {
     case 0x3FF68:  /* PRS */
         /* Inline completion for accurate busy-wait */
-        if ((pc->prs & PRS_BUSY) && pc->reader_done_ns > 0
+        if (pc->init_l && (pc->prs & PRS_BUSY) && pc->reader_done_ns > 0
             && pc->clock_ptr && *pc->clock_ptr >= pc->reader_done_ns) {
             pc11_reader_service(pc);
         }
@@ -121,7 +123,7 @@ static int pc11_read(void *dev, uint32_t addr, uint16_t *data) {
         return 0;
 
     case 0x3FF6C:  /* PPS */
-        if (!(pc->pps & PPS_DONE) && pc->punch_done_ns > 0
+        if (pc->init_l && !(pc->pps & PPS_DONE) && pc->punch_done_ns > 0
             && pc->clock_ptr && *pc->clock_ptr >= pc->punch_done_ns) {
             pc11_punch_service(pc);
         }
@@ -140,6 +142,7 @@ static int pc11_write(void *dev, uint32_t addr, uint16_t data, int is_byte) {
     PC11 *pc = (PC11 *)dev;
     uint32_t reg = addr & ~1u;
     (void)is_byte;
+    if (!pc->init_l) return 0;
 
     switch (reg) {
     case 0x3FF68: {  /* PRS */
@@ -201,7 +204,23 @@ static int pc11_write(void *dev, uint32_t addr, uint16_t data, int is_byte) {
     return -1;
 }
 
+/* BUS INIT: clear reader IE/DONE and punch IE, set punch READY
+ * (PC11 manual ch. 3) */
+static void pc11_bus_init(void *dev, int init_l) {
+    PC11 *pc = dev;
+    pc->init_l = (uint8_t)init_l;
+    if (init_l) return;
+    pc->prs &= PRS_ERR;
+    pc->pps = (pc->pps & PPS_ERR) | PPS_DONE;
+    pc->reader_done_ns = pc->punch_done_ns = 0;
+    if (pc->irq_clr) {
+        pc->irq_clr(pc->irq_ctx, PC11_PTR_VEC);
+        pc->irq_clr(pc->irq_ctx, PC11_PTP_VEC);
+    }
+}
+
 int pc11_register(PC11 *pc, Bus *bus) {
+    if (bus_register_init(bus, pc, pc11_bus_init) < 0) return -1;
     return bus_register(bus, PC11_BASE, PC11_END,
                         pc, pc11_read, pc11_write, "PC11", 150);
 }

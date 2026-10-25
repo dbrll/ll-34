@@ -518,6 +518,13 @@ const char *wasm_probe_sig_group(int i) {
     return (d && d->group) ? d->group : "";
 }
 
+/* Chip and pin of the signal driver ("E81:3"), or "" */
+EMSCRIPTEN_KEEPALIVE
+const char *wasm_probe_sig_loc(int i) {
+    const ProbeDef *d = probe_def_get(i);
+    return (d && d->loc) ? d->loc : "";
+}
+
 EMSCRIPTEN_KEEPALIVE
 const char *wasm_probe_sig_alias(int i) {
     const ProbeDef *d = probe_def_get(i);
@@ -525,7 +532,7 @@ const char *wasm_probe_sig_alias(int i) {
 }
 
 static int def_is_1bit(const ProbeDef *d) {
-    return d && d->level == 1 && d->bit != PROBE_BIT_WHOLE;
+    return d && probe_is_1bit(d);
 }
 
 EMSCRIPTEN_KEEPALIVE
@@ -640,6 +647,17 @@ double wasm_probe_read_ns(int sample_idx) {
                                : probe_get(&probe_inst, (uint32_t)sample_idx);
     if (!first || !snap) return 0.0;
     return (double)(snap->ns - first->ns);
+}
+
+/* Call while powered off/halted. Does not rescale time already elapsed. */
+EMSCRIPTEN_KEEPALIVE
+int wasm_set_timing_profile(int kind) {
+    if (kind != TIMING_NOMINAL && kind != TIMING_AGED) return -1;
+    return machine_set_timing_profile(&m, (TimingKind)kind);
+}
+EMSCRIPTEN_KEEPALIVE
+int wasm_get_timing_profile(void) {
+    return m.cpu.timing == &clock_aged ? TIMING_AGED : TIMING_NOMINAL;
 }
 
 int main(void) {

@@ -1,13 +1,5 @@
-/*
- * debug/disasm.c -- PDP-11 instruction disassembler for ll-34
- *
- * Written from scratch for the ll-34 project (MIT license).
- * Covers the PDP-11/34 instruction set: basic, EIS (MUL/DIV/ASH/ASHC),
- * and SOB/XOR/MARK/SPL/MFPI/MTPI/SXT/SWAB.
- * Does NOT cover FPP (FIS/FP11) or CIS.
- *
- * All output uses PDP-11 octal convention.
- */
+/* PDP-11/34 disassembler, written for ll-34 (MIT license). It covers the
+ * basic and EIS instructions. FP11 opcodes are shown as .WORD. */
 
 #include <stdio.h>
 #include <string.h>
@@ -133,20 +125,23 @@ static int do_sop(const char *mnem, uint16_t ir, uint16_t addr,
 /* Condition code ops (NOP, CLC, CLV, CLZ, CLN, CCC, SEC, SEV, SEZ, SEN, SCC) */
 static void do_cc(uint16_t ir, char *buf, int buflen)
 {
-    if ((ir & 0x1F) == 0) {
+    if ((ir & 0xF) == 0) {                   /* 000240 and 000260 */
         snprintf(buf, buflen, "NOP");
         return;
     }
     int set = (ir >> 4) & 1;
-    char tmp[32] = "";
-    if (ir & 1) strcat(tmp, "C");
-    if (ir & 2) strcat(tmp, "V");
-    if (ir & 4) strcat(tmp, "Z");
-    if (ir & 8) strcat(tmp, "N");
-    if ((ir & 0xF) == 0xF)
+    if ((ir & 0xF) == 0xF) {
         snprintf(buf, buflen, "%s", set ? "SCC" : "CCC");
-    else
-        snprintf(buf, buflen, "%s%s", set ? "SE" : "CL", tmp);
+        return;
+    }
+    /* MACRO-11 form for combinations: SEC!SEV */
+    static const char flag[4] = { 'C', 'V', 'Z', 'N' };
+    buf[0] = '\0';
+    for (int b = 0; b < 4; b++) {
+        if (!(ir & (1 << b))) continue;
+        size_t l = strlen(buf);
+        snprintf(buf + l, buflen - l, "%s%s%c", l ? "!" : "", set ? "SE" : "CL", flag[b]);
+    }
 }
 
 int pdp11_disasm(uint16_t addr,
@@ -204,7 +199,7 @@ int pdp11_disasm(uint16_t addr,
         snprintf(buf, buflen, "EMT    %o", ir & 0xFF);
         return 2;
     }
-    if ((ir & 0xFF00) == 0x8C00) {  /* 104400-104777: TRAP */
+    if ((ir & 0xFF00) == 0x8900) {  /* 104400-104777: TRAP */
         snprintf(buf, buflen, "TRAP   %o", ir & 0xFF);
         return 2;
     }
@@ -284,27 +279,26 @@ int pdp11_disasm(uint16_t addr,
     case 0066: return do_sop("MTPI", ir, addr, read_word, ctx, buf, buflen);
     case 0067: return do_sop("SXT",  ir, addr, read_word, ctx, buf, buflen);
     /* Byte */
-    case 0450: return do_sop("CLRB", ir, addr, read_word, ctx, buf, buflen);
-    case 0451: return do_sop("COMB", ir, addr, read_word, ctx, buf, buflen);
-    case 0452: return do_sop("INCB", ir, addr, read_word, ctx, buf, buflen);
-    case 0453: return do_sop("DECB", ir, addr, read_word, ctx, buf, buflen);
-    case 0454: return do_sop("NEGB", ir, addr, read_word, ctx, buf, buflen);
-    case 0455: return do_sop("ADCB", ir, addr, read_word, ctx, buf, buflen);
-    case 0456: return do_sop("SBCB", ir, addr, read_word, ctx, buf, buflen);
-    case 0457: return do_sop("TSTB", ir, addr, read_word, ctx, buf, buflen);
-    case 0460: return do_sop("RORB", ir, addr, read_word, ctx, buf, buflen);
-    case 0461: return do_sop("ROLB", ir, addr, read_word, ctx, buf, buflen);
-    case 0462: return do_sop("ASRB", ir, addr, read_word, ctx, buf, buflen);
-    case 0463: return do_sop("ASLB", ir, addr, read_word, ctx, buf, buflen);
-    case 0465: return do_sop("MFPD", ir, addr, read_word, ctx, buf, buflen);
-    case 0466: return do_sop("MTPD", ir, addr, read_word, ctx, buf, buflen);
+    case 01050: return do_sop("CLRB", ir, addr, read_word, ctx, buf, buflen);
+    case 01051: return do_sop("COMB", ir, addr, read_word, ctx, buf, buflen);
+    case 01052: return do_sop("INCB", ir, addr, read_word, ctx, buf, buflen);
+    case 01053: return do_sop("DECB", ir, addr, read_word, ctx, buf, buflen);
+    case 01054: return do_sop("NEGB", ir, addr, read_word, ctx, buf, buflen);
+    case 01055: return do_sop("ADCB", ir, addr, read_word, ctx, buf, buflen);
+    case 01056: return do_sop("SBCB", ir, addr, read_word, ctx, buf, buflen);
+    case 01057: return do_sop("TSTB", ir, addr, read_word, ctx, buf, buflen);
+    case 01060: return do_sop("RORB", ir, addr, read_word, ctx, buf, buflen);
+    case 01061: return do_sop("ROLB", ir, addr, read_word, ctx, buf, buflen);
+    case 01062: return do_sop("ASRB", ir, addr, read_word, ctx, buf, buflen);
+    case 01063: return do_sop("ASLB", ir, addr, read_word, ctx, buf, buflen);
+    case 01065: return do_sop("MFPD", ir, addr, read_word, ctx, buf, buflen);
+    case 01066: return do_sop("MTPD", ir, addr, read_word, ctx, buf, buflen);
+    case 01064: return do_sop("MTPS", ir, addr, read_word, ctx, buf, buflen);
+    case 01067: return do_sop("MFPS", ir, addr, read_word, ctx, buf, buflen);
     }
 
-    /* SPL: 000230-000237 */
-    if ((ir & 0xFFF8) == 0x00B8) {
-        snprintf(buf, buflen, "SPL    %o", ir & 7);
-        return 2;
-    }
+    /* 000230-000237 (SPL on later models) are reserved on the 11/34 */
+
 
     /* Misc fixed opcodes */
     switch (ir) {

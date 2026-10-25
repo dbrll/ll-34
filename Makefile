@@ -13,7 +13,7 @@ SRCS = frontends/cli/main.c pdp11/machine.c pdp11/unibus/unibus.c pdp11/unibus/r
        pdp11/kw11/kw11.c \
        pdp11/pc11/pc11.c \
        pdp11/ky11/console_sim.c \
-       pdp11/probe/probe.c \
+       pdp11/probe/probe.c pdp11/probe/probe_export.c \
        frontends/tty/tty_stdio.c frontends/tty/tty_tcp.c frontends/tty/tty_pty.c \
        pdp11/debug/disasm.c pdp11/debug/memdump.c
 
@@ -24,7 +24,7 @@ ROM_HEADER = pdp11/kd11ea/roms/rom_images.h
 ROM_GENERATOR = pdp11/kd11ea/roms/gen_rom_header.c
 
 HEADERS = pdp11/machine.h pdp11/unibus/unibus.h pdp11/unibus/ram.h pdp11/unibus/loader.h pdp11/trace.h \
-          pdp11/kd11ea/kd11ea.h pdp11/kd11ea/rom_wiring.h pdp11/kd11ea/ucode_rom.h $(ROM_HEADER) pdp11/kd11ea/clockgen.h pdp11/kd11ea/clock.h pdp11/kd11ea/int.h pdp11/kd11ea/debug.h pdp11/kd11ea/mmu.h \
+          pdp11/kd11ea/kd11ea.h pdp11/kd11ea/rom_wiring.h pdp11/kd11ea/bus_wiring.h pdp11/kd11ea/ucode_rom.h $(ROM_HEADER) pdp11/kd11ea/clockgen.h pdp11/kd11ea/clock.h pdp11/kd11ea/int.h pdp11/kd11ea/debug.h pdp11/kd11ea/mmu.h \
           pdp11/m9301/rom.h pdp11/m9301/m9301_yf_rom.h \
           pdp11/dl11/dl11.h \
           pdp11/rk11/rk11.h \
@@ -73,6 +73,7 @@ WASM_EXPORTS = '["_main",\
 "_wasm_rx_push","_wasm_tx_poll",\
 "_wasm_set_odt","_wasm_load_rk_image","_wasm_load_rl_image","_wasm_load_lda","_wasm_load_asc",\
 "_wasm_reset","_wasm_power_on","_wasm_power_off",\
+"_wasm_set_timing_profile","_wasm_get_timing_profile",\
 "_wasm_console_key","_wasm_get_display_addr","_wasm_get_display_data","_wasm_get_leds",\
 "_wasm_get_reg","_wasm_get_psw","_wasm_get_ir","_wasm_get_us",\
 "_wasm_is_halted","_wasm_halt","_wasm_run","_wasm_step",\
@@ -91,7 +92,7 @@ WASM_EXPORTS = '["_main",\
 "_wasm_probe_arm","_wasm_probe_disarm","_wasm_probe_state",\
 "_wasm_probe_sample_count","_wasm_probe_read",\
 "_wasm_probe_sel_is_1bit","_wasm_probe_read_ns",\
-"_wasm_probe_sig_alias","_wasm_probe_sig_group","_wasm_probe_chip_name","_wasm_probe_sig_is_1bit",\
+"_wasm_probe_sig_alias","_wasm_probe_sig_loc","_wasm_probe_sig_group","_wasm_probe_chip_name","_wasm_probe_sig_is_1bit",\
 "_wasm_probe_clear_trigger","_wasm_probe_set_trigger_edge","_wasm_probe_trigger_index"]'
 
 $(WASM_DIR)/ll-34.js: $(WASM_SRCS) $(HEADERS)

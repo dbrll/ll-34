@@ -1,13 +1,12 @@
 #define _DEFAULT_SOURCE
 /*
- * kd11ea.c - KD11-EA (PDP-11/34A) circuit-level emulator
+ * KD11-EA, the PDP-11/34A CPU, at the circuit level.
  *
- * Executes the real dumped 512x48-bit microcode ROM, one micro-word
- * per cycle.  All combinatorial ROMs are modeled from their truth
- * tables, reconstituted from the original DEC schematics.
- *
- * Data path reference: KD11-E Maintenance Manual, Chapter 4
- * Flow diagrams: KD11-E Flow Diagrams, sheets 1-26
+ * The original microcode (512 words of 48 bits) runs one word per cycle.
+ * The other PROMs are images in physical pin order, and this code only
+ * models the gates and the wiring between them, after the MP00190
+ * schematics. The data path is described in chapter 4 of the KD11-E
+ * maintenance manual, and the microcode in the KD11-E flow diagrams.
  *
  * Damien Boureille, 2026
  * MIT Licence
@@ -20,18 +19,16 @@
 #include <unistd.h>
 #include "kd11ea.h"
 #include "ucode_rom.h"
+#include "bus_wiring.h"
 #include "../trace.h"
 #include "../probe/probe.h"
-
-/* BYTE H = IR[15] AND NOT(IR[14] AND IR[13]) -- excludes SUB (16xxxx) */
-#define IS_BYTE_INSTR(ir) (((ir) & 0x8000) && (((ir) >> 13) & 3) != 3)
 
 /* AMUX: post-ALU mux, feeds SSMUX (E22/E27, 74S157, K1-6/K1-7) */
 static uint16_t amux_select(KD11EA *cpu, uint8_t amux_l, uint16_t alu_result) {
     uint8_t sel = ~amux_l & 3;
     switch (sel) {
     case 0: return cpu->unibus_data;  /* UNIBUS data (E16/E21) */
-    case 1: return 0;                 /* CONSTANTS (float HIGH when no SERVICE) */
+    case 1: return 0;                 /* constants, the vector is set later */
     case 2: return alu_result;        /* ALU output */
     case 3: return cpu->psw;          /* PSW register */
     }
@@ -45,7 +42,7 @@ static uint16_t ssmux_select(uint16_t amux_data, uint8_t swap, uint8_t sex) {
         return ((amux_data >> 8) & 0xFF) | ((amux_data & 0xFF) << 8);
     if (sex)
         return (amux_data & 0x80) ? (amux_data | 0xFF00) : (amux_data & 0x00FF);  /* E19 (74S86) */
-    return amux_data;  /* straight through */
+    return amux_data;
 }
 
 /* BMUX: ALU B-input select (E38/E39, 74S153, K1-3/K1-4) */
@@ -53,7 +50,7 @@ static uint16_t bmux_select(KD11EA *cpu, uint8_t bleg) {
     switch (bleg) {
     case BLEG_BREG:    return cpu->b_reg;
     case BLEG_BXREG:   return cpu->bx_reg;
-    case BLEG_PLUS16:  return 14;            /* adjusted -2 for counter timing */
+    case BLEG_PLUS16:  return 14;            /* 16 less 2, for the counter timing */
     case BLEG_PLUS1:   return 1;
     }
     return 0;
@@ -89,7 +86,7 @@ static uint8_t spa_resolve(KD11EA *cpu, uint8_t sel, uint64_t uw) {
     }
     case SPA_RS: {
         uint8_t reg = (cpu->ir >> 6) & 7;
-        if (!UW_FORCE_RSV1_L(uw))  /* E103 bit 40: active-low, forces RS bit0=1 */
+        if (!UW_FORCE_RSV1_L(uw))  /* bit 40 (E103), active low, sets RS bit 0 */
             reg |= 1;
         return reg_to_spa(reg, user_mode);
     }
@@ -101,17 +98,76 @@ static uint8_t spa_resolve(KD11EA *cpu, uint8_t sel, uint64_t uw) {
 
 /* B/BX register update (74194 shift registers).
  * Bits are wired reversed on KD11-EA: physical SHIFT_R = logical left,
- * physical SHIFT_L = logical right. We store MSB=bit15, so we invert. */
+ * physical SHIFT_L = logical right. We store MSB=bit15, so we invert.
+ * On a logical right shift, bit 7 takes SHIFT IN 07 (K1-10). */
 static void breg_update(uint16_t *reg, uint8_t mode, uint16_t load_data,
-                         uint8_t shift_in) {
+                         uint8_t shift_in, uint8_t shift_in_07) {
     switch (mode) {
     case BMODE_HOLD:    break;
-    case BMODE_SHIFT_R: /* physical SHIFT_R = logical left shift (×2) */
+    case BMODE_SHIFT_L: /* x2, shift_in into bit 0 */
         *reg = (*reg << 1) | (shift_in & 1); break;
-    case BMODE_SHIFT_L: /* physical SHIFT_L = logical right shift (÷2) */
-        *reg = (*reg >> 1) | ((uint16_t)shift_in << 15); break;
+    case BMODE_SHIFT_R: /* /2, shift_in into bit 15 */
+        *reg = (uint16_t)(((*reg >> 1) & ~0x0080) | ((shift_in_07 & 1) << 7) |
+                          ((uint16_t)(shift_in & 1) << 15)); break;
     case BMODE_LOAD:    *reg = load_data; break;
     }
+}
+
+/* The BYTE MUX select of E108 (K1-10) is BYTE L, E68 pin 9. Low means a
+ * byte. */
+static int byte_mux_ir(uint16_t ir) {
+    return !E68_BYTE_L(e68_rom[e68_addr(ir)]);
+}
+
+static int byte_mux(const KD11EA *cpu) {
+    return byte_mux_ir(cpu->ir);
+}
+
+/* MODE 01 and 00 H (K1-8, SR0 MUX E71). They give the current mode, the
+ * previous mode, or kernel. */
+static uint8_t mmu_mode_of(uint64_t uw, uint16_t psw) {
+    if (UW_FORCE_KERNEL(uw))
+        return 0;
+    return (uint8_t)(!UW_PREV_MODE_L(uw) ? (psw >> 12) & 3 : (psw >> 14) & 3);
+}
+
+/* The PAR and PDR entry is addressed by the mode and VBA 15-13 (E91,
+ * K1-7). */
+static int mmu_index(uint64_t uw, uint16_t psw, uint16_t vba) {
+    return (mmu_mode_of(uw, psw) == 3 ? 8 : 0) + (vba >> 13);
+}
+
+/* CC N, Z, V and C (K1-10, from E108, E121 and E107) in bits 3-0, for the
+ * probe. */
+static uint8_t cc_wires(uint16_t ir, uint16_t a_leg, uint16_t b_leg,
+                        uint16_t alu, uint16_t psw, uint8_t rot_cbit) {
+    int byte = byte_mux_ir(ir);
+    uint8_t sign = byte ? 7 : 15;
+    uint8_t n = (alu >> sign) & 1;
+    uint8_t z = (alu & (byte ? 0xFF : 0xFFFF)) == 0;
+    uint8_t vc = e107_rom[e107_addr(n, (a_leg >> sign) & 1, (b_leg >> sign) & 1,
+                                    rot_cbit, psw & 1,
+                                    E68_CC_CODE(e68_rom[e68_addr(ir)]))];
+    return (uint8_t)((n << 3) | (z << 2) | (E107_CC_V(vc) << 1) | E107_CC_C(vc));
+}
+
+/* The service ROMs of K2-3. Returns the outputs of E51. */
+static uint8_t service_roms(KD11EA *cpu) {
+    uint8_t e54_d = e54_rom[e54_addr(kd11ea_ir_pins(cpu), (cpu->psw >> 15) & 1)];
+    cpu->enab_tbit = E54_ENAB_TBIT(e54_d);
+    cpu->tbit_trap = ((cpu->psw >> 4) & 1) & cpu->enab_tbit;
+    uint16_t e52_a = e52_addr(
+        cpu->tbit_trap,                     /* T AND ENAB TBIT (E50) */
+        cpu->stov,
+        cpu->bus_error,
+        0,                                  /* PE: not modeled */
+        cpu->mmu_kte,
+        0,                                  /* PFAIL: not modeled */
+        cpu->ir_code,
+        1);                                 /* FP11 SERVICE BR PFAIL L */
+    cpu->svc_e52 = e52_rom[e52_a];
+    cpu->svc_e51 = e51_rom[e51_addr(cpu->svc_e52, 1)];
+    return cpu->svc_e51;
 }
 
 /* MPC next-address: NEXT field OR'd with branch signals via E102 */
@@ -123,67 +179,46 @@ static uint16_t compute_next_mpc(KD11EA *cpu, uint64_t uw, uint8_t count_at_star
     uint8_t e102_a = e102_addr(but_bits);
     uint8_t e102_d = e102_rom[e102_a];
 
-    /* CC_N/CC_Z are combinatorial from ALU result, not from PSW register */
-    if (E102_BUT_ALU_OUT_MPC7(e102_d))
-        next |= (cpu->alu_out ? 1 : 0) << 7;  /* TODO: which ALU output bit? */
+    /* The branches test ALU COUT (K1-4), and N and Z of the ALU result, not
+     * those of the PSW. */
+    if (E102_BUT_ALU_COUT_MPC7(e102_d))
+        next |= (cpu->alu_cout & 1) << 7;
+    int byte = byte_mux(cpu);
     if (E102_BUT_CC_N_MPC6(e102_d))
-        next |= ((cpu->alu_out >> 15) & 1) << 6;  /* N: ALU result bit 15 */
+        next |= ((cpu->alu_out >> (byte ? 7 : 15)) & 1) << 6;
     if (E102_BUT_BXREG01_MPC5(e102_d))
         next |= ((bx_at_start >> 1) & 1) << 5;
     if (E102_BUT_BXREG00_MPC4(e102_d))
         next |= (bx_at_start & 1) << 4;
     if (E102_BUT_SP15_MPC3(e102_d))
-        next |= ((sp_out >> 15) & 1) << 3;  /* Scratchpad output bit 15 (sign) */
+        next |= ((sp_out >> 15) & 1) << 3;
     if (E102_BUT_COUNT05_MPC2(e102_d))
         next |= ((count_at_start >> 5) & 1) << 2;
     if (E102_BUT_CC_Z_MPC1(e102_d))
-        next |= ((cpu->alu_out == 0) ? 1 : 0) << 1;  /* Z: ALU result == 0 */
+        next |= ((cpu->alu_out & (byte ? 0xFF : 0xFFFF)) == 0 ? 1 : 0) << 1;
     if (E102_BUT_IR09_MPC0(e102_d))
         next |= ((cpu->ir >> 9) & 1);
 
     /* BUT SERVICE (K2-3): E52 priority-encodes trap conditions,
      * E51 decodes to vector bits. E3 forces MPC bit 0 -> MPC 001. */
     if (UW_BUT_SERVICE(uw)) {
-        uint16_t e52_a = e52_addr(
-            cpu->tbit_trap,                     /* A0: TBIT AND ENAB_TBIT */
-            0,                                  /* A1: STOV (TODO: E24 flip-flop) */
-            cpu->bus_error,                      /* A2: BE (bus error / NXM) */
-            0,                                  /* A3: PE (TODO: parity error) */
-            cpu->mmu_kte,                           /* A4: KTE (MMU abort) */
-            0,                                  /* A5: PFAIL (TODO: power fail) */
-            cpu->ir_code,                       /* A6-A8: IR CODE[2:0] from E53 */
-            0);                                 /* A9: SVC BR PFAIL (backplane) */
-        uint8_t e52_d = e52_rom[e52_a];
-
-        if (e52_d != E52_CODE_NONE) {
-            /* Trap condition detected. Decode via E51. */
-            uint8_t e51_a = e52_to_e51_addr(e52_d);
-            uint8_t e51_d = e51_rom[e51_a];
-
-            /* E3 (7400 NAND gate, K2-3): generates MPC 00 L when trap
-             * present. This ORs bit 0 into the MPC (wire-OR bus).
-             * At MPC 000, NEXT=016, so result = 016|001 = 017. */
+        uint8_t e51_d = service_roms(cpu);
+        /* E45 toggles on the STOV service, so E29 stays clear during its
+         * trap sequence. J is BUT SERVICE and K is STOV SERV. */
+        cpu->stov_en = E51_STOV_SERV(e51_d) ? !cpu->stov_en : 1;
+        if (!cpu->stov_en)
+            cpu->stov = 0;
+        if (!E51_ENAB_GRANTS(e51_d)) {
             next |= 1;
-
-            /* Store vector and service signals for the trap routine.
-             * E51 encodes vectors on 3 bits (C4:C3:C2 → bits [4:2]).
-             * KTE (vec 250) exceeds this range - on real hardware, the
-             * KT11 option card overrides the vector via additional wiring. */
-            if (e52_d == E52_CODE_KTE)
-                cpu->service_vector = 0250;     /* KT11 MMU trap vector */
-            else
-                cpu->service_vector = E51_VECTOR(e51_d);
+            cpu->service_vector = SERVICE_VECTOR(e51_d, cpu->mmu_kte, 0);
             cpu->service_trap = 1;
+            cpu->service_intr = 0;
 
-            /* Clear the latched trap conditions that were just serviced.
-             * On real hardware, STOV SERV clears the stack overflow FF,
-             * and the trap service sequence clears BE, ir_code, etc. */
             cpu->bus_error = 0;
             cpu->tbit_trap = 0;
             cpu->mmu_kte = 0;
 
-            trace("  BUT SERVICE: code=%X vec=%03o%s%s",
-                  e52_d, cpu->service_vector,
+            trace("  BUT SERVICE: vec=%03o%s%s", cpu->service_vector,
                   E51_PFAIL_SERV(e51_d) ? " PFAIL_SERV" : "",
                   E51_STOV_SERV(e51_d) ? " STOV_SERV" : "");
         } else if (cpu->halt_rqst) {
@@ -191,53 +226,31 @@ static uint16_t compute_next_mpc(KD11EA *cpu, uint64_t uw, uint8_t count_at_star
              * On real hardware, drives RUN flip-flop low. */
             cpu->halted = 1;
             trace("  BUT SERVICE: HALT");
+        } else {
+            /* Grant the highest BR above the CPU priority (K2-2). */
+            uint8_t cpu_pri = (cpu->psw >> 5) & 7;
+            if (int_pending(&cpu->intc, cpu_pri) >= 0) {
+                IntRequest irq = int_ack(&cpu->intc, cpu_pri);
+                next |= 1;
+                cpu->service_vector = irq.vector;
+                cpu->service_trap = 1;
+                cpu->service_intr = 1;
+                trace("  BUT SERVICE: INTR vec=%03o BR%d", irq.vector, irq.priority);
+            }
         }
-        /* else: no trap, ENAB_GRANTS allows bus interrupts (not yet modeled) */
     }
 
-    /* BUT DEST: C switch, not E69/E70 lookup (E69 inactive during BUT_DEST,
-     * TM-001 table has errors, gen_e69_e70.py has suspected O0/O1 swap).
-     * IR[5:3] -> MPC[2:0], instruction type bits -> MPC[4:3]. */
+    /* BUT DEST (K2-6). E69 and E70 drive MPC 07-03, and IR 5-3 drive
+     * MPC 02-00. */
     if (misc == MISC_BUT_DEST) {
-        next |= (cpu->ir >> 3) & 7;  /* Dest mode bits IR[5:3] -> MPC[2:0] */
-
-        /* E88 latch replays E69 outputs (MOV_L, MPC[4:3]) during BUT_DEST */
-        uint8_t op = (cpu->ir >> 12) & 0xF;
-        if (op >= 1 && op <= 6 && op != 0) {
-            /* Word DOP: op 01-06 */
-            switch (op) {
-            case 0x1:  /* MOV */
-                next |= 0010;  /* bit3 */
-                break;
-            case 0x2:  /* CMP */
-            case 0x3:  /* BIT */
-                next |= 0020;  /* bit4 (NONMOD) */
-                break;
-            case 0x4:  /* BIC */
-            case 0x5:  /* BIS */
-            case 0x6:  /* ADD */
-                next |= 0030;  /* bits 4,3 (MOD) */
-                break;
-            }
-        } else if (op >= 0x9 && op <= 0xE) {
-            /* Byte DOP: op 11-16 (octal), i.e. 0x9-0xE */
-            switch (op) {
-            case 0x9:  /* MOVB */
-                next |= 0010;  /* bit3 */
-                break;
-            case 0xA:  /* CMPB */
-            case 0xB:  /* BITB */
-                next |= 0020;  /* bit4 (NONMOD) */
-                break;
-            case 0xC:  /* BICB */
-            case 0xD:  /* BISB */
-                next |= 0030;  /* bits 4,3 (MOD) */
-                break;
-            case 0xE:  /* SUB */
-                next |= 0030;  /* bits 4,3 (MOD+SUB same path) */
-                break;
-            }
-        }
+        uint8_t d69 = e69_rom[e69_addr(cpu->ir, /*but_dest_l=*/0, /*ir_decode_h=*/0)];
+        uint8_t d70 = e70_rom[e70_addr(cpu->ir, /*but_dest_l=*/0, /*ir_decode_h=*/0)];
+        next |= (!E69_MPC03_L(d69)) << 3;
+        next |= (!E69_MPC04_L(d69)) << 4;
+        next |= (!E70_MPC05_L(d70)) << 5;
+        next |= (!E70_MPC06_L(d70)) << 6;
+        next |= (!E70_MPC07_L(d70)) << 7;
+        next |= (cpu->ir >> 3) & 7;
     }
 
     return next & 0x1FF;
@@ -250,78 +263,89 @@ static uint16_t ir_decode_entry(uint16_t ir, uint16_t psw) {
     uint8_t ir1412 = (ir >> 12) & 7;   /* IR[14:12] */
     uint8_t ir15 = (ir >> 15) & 1;
 
-    /* E69/E70: DOP source fetch. E69->MPC[4:3]+SRC_H, E70->MPC[7:5] */
+    /* E69 and E70 decode the double operand instructions. */
     {
-        uint8_t a69 = e69_addr(ir, /*but_dest_l=*/1, /*ir_decode_h=*/1);
-        uint8_t d69 = e69_rom[a69];
-        mpc |= (!(d69 & 0x01)) << 4;       /* MPC04 */
-        mpc |= (!(d69 & 0x02)) << 3;       /* MPC03 */
-        if (!(d69 & 0x08))                  /* SRC H: gate src_mode onto MPC[2:0] */
-            mpc |= (ir >> 9) & 7;           /* IR[11:9] → MPC[2:0] via 74H01 */
+        uint8_t d69 = e69_rom[e69_addr(ir, /*but_dest_l=*/1, /*ir_decode_h=*/1)];
+        mpc |= (!E69_MPC04_L(d69)) << 4;
+        mpc |= (!E69_MPC03_L(d69)) << 3;
+        if (!E69_SRC_H(d69))                /* IR 11-9 on MPC 02-00 */
+            mpc |= (ir >> 9) & 7;
 
-        uint16_t a70 = e70_addr(ir, /*but_dest_l=*/1, /*ir_decode_h=*/1);
-        uint8_t d70 = e70_rom[a70];
-        mpc |= (!(d70 & 0x02)) << 7;       /* MPC07 */
-        mpc |= (!(d70 & 0x04)) << 6;       /* MPC06 */
-        mpc |= (!(d70 & 0x08)) << 5;       /* MPC05 */
+        uint8_t d70 = e70_rom[e70_addr(ir, /*but_dest_l=*/1, /*ir_decode_h=*/1)];
+        mpc |= (!E70_MPC07_L(d70)) << 7;
+        mpc |= (!E70_MPC06_L(d70)) << 6;
+        mpc |= (!E70_MPC05_L(d70)) << 5;
     }
 
-    /* E60: SOP/branch/operate MPC[6:3], enabled when IR[14:12]=000 */
+    /* E60 decodes the single operand instructions. */
     if (ir1412 == 0) {
-        uint8_t a60 = e59_e60_addr(ir);
-        uint8_t d60 = e60_rom[a60];
-        mpc |= (!(d60 & 0x01)) << 6;       /* MPC06 */
-        mpc |= (!(d60 & 0x02)) << 5;       /* MPC05 */
-        mpc |= (!(d60 & 0x04)) << 4;       /* MPC04 */
-        mpc |= (!(d60 & 0x08)) << 3;       /* MPC03 */
+        uint8_t d60 = e60_rom[e59_e60_addr(ir)];
+        mpc |= (!E60_MPC06_L(d60)) << 6;
+        mpc |= (!E60_MPC05_L(d60)) << 5;
+        mpc |= (!E60_MPC04_L(d60)) << 4;
+        mpc |= (!E60_MPC03_L(d60)) << 3;
     }
 
-    /* E59: DEST gate (O3) -> gates IR[5:3] onto MPC[2:0] */
+    /* E59 DEST puts IR 5-3 on MPC 02-00. */
     if (ir1412 == 0) {
-        uint8_t a59 = e59_e60_addr(ir);
-        uint8_t d59 = e59_rom[a59];
-        if (!(d59 & 0x08))                  /* DEST gate (E59 O3) */
-            mpc |= (ir >> 3) & 7;           /* IR[5:3] → MPC[2:0] via 74H01 */
+        uint8_t d59 = e59_rom[e59_e60_addr(ir)];
+        if (!E59_DEST_L(d59))
+            mpc |= (ir >> 3) & 7;
     }
 
     /* E63: operates MPC[3:0] (HALT, WAIT, RTI, BPT, IOT, RTS, CC, JMP, SWAB) */
     if (ir1412 == 0 && ((ir >> 8) & 0xF) == 0 && !ir15) {
         uint8_t a63 = e63_addr(ir);
         uint8_t d63 = e63_rom[a63];
-        mpc |= (!(d63 & 0x01));             /* MPC00 */
-        mpc |= (!(d63 & 0x02)) << 1;       /* MPC01 */
-        mpc |= (!(d63 & 0x04)) << 2;       /* MPC02 */
-        mpc |= (!(d63 & 0x08)) << 3;       /* MPC03 (wire-OR with E60) */
+        mpc |= (!E63_MPC00_L(d63));
+        mpc |= (!E63_MPC01_L(d63)) << 1;
+        mpc |= (!E63_MPC02_L(d63)) << 2;
+        mpc |= (!E63_MPC03_L(d63)) << 3;
     }
 
     /* E74: EIS decode (IR15=0 only, active when IR[14:12]=111) */
     if (!ir15) {
-        uint8_t a74 = e74_addr(ir, /*ir_decode_h=*/1);
-        uint8_t d74 = e74_rom[a74];
-        /* O0=IR CODE 00 L, O1-O5=MPC[7:3] L, O6=DEST L */
-        mpc |= (!(d74 & 0x02)) << 7;       /* O1: MPC07 */
-        mpc |= (!(d74 & 0x04)) << 6;       /* O2: MPC06 */
-        mpc |= (!(d74 & 0x08)) << 5;       /* O3: MPC05 */
-        mpc |= (!(d74 & 0x10)) << 4;       /* O4: MPC04 */
-        mpc |= (!(d74 & 0x20)) << 3;       /* O5: MPC03 */
-        /* O6 (bit 6) = DEST gate for EIS (gates dst_mode onto MPC[2:0]) */
-        if (!(d74 & 0x40))
-            mpc |= (ir >> 3) & 7;           /* IR[5:3] → MPC[2:0] */
+        uint8_t d74 = e74_rom[e74_addr(ir, /*ir_decode_h=*/1)];
+        mpc |= (!E74_MPC07_L(d74)) << 7;
+        mpc |= (!E74_MPC06_L(d74)) << 6;
+        mpc |= (!E74_MPC05_L(d74)) << 5;
+        mpc |= (!E74_MPC04_L(d74)) << 4;
+        mpc |= (!E74_MPC03_L(d74)) << 3;
+        if (!E74_DEST_L(d74))
+            mpc |= (ir >> 3) & 7;
     }
 
-    /* E71: branch condition, MPC07 L pulled low when taken */
+    /* E71 (E72 on the schematic): branch condition, MPC07 L pulled low when taken */
     if (ir1412 == 0 && !((ir >> 11) & 1)) {
         uint8_t a71 = e71_addr(ir, psw);
         uint8_t d71 = e71_rom[a71];
-        mpc |= (!(d71 & 0x01)) << 7;       /* MPC07 (branch taken → 0200) */
+        mpc |= (!E71_MPC07_L(d71)) << 7;
     }
 
     /* JSR: handled by E60+E59. EMT/TRAP/BPT/IOT/illegal/HALT: mpc=0 here,
      * E53 sets IR CODE or HALT RQST, BUT SERVICE overrides to MPC 001. */
-
     return mpc & 0x1FF;
 }
 
+
+/* Decode ROM outputs on their pins, for the probe. A disabled open
+ * collector output reads high. */
+typedef struct { uint8_t e53, e59, e60, e63, e69, e70, e71, e74; } DecodePins;
+
+static DecodePins decode_pins(uint16_t ir, uint16_t psw, int ir_decode_h, int but_dest_l) {
+    DecodePins d;
+    int ir1412_0 = ((ir >> 12) & 7) == 0;
+    int user = (psw >> 15) & 1;
+    d.e53 = e53_enabled(ir) ? e53_rom[e53_addr(ir, user)] : 0xF;
+    d.e59 = (ir_decode_h && ir1412_0) ? e59_rom[e59_e60_addr(ir)] : 0xF;
+    d.e60 = (ir_decode_h && ir1412_0) ? e60_rom[e59_e60_addr(ir)] : 0xF;
+    d.e63 = (ir_decode_h && (ir & 0xFF00) == 0) ? e63_rom[e63_addr(ir)] : 0xF;
+    d.e69 = e69_rom[e69_addr(ir, but_dest_l, ir_decode_h)];
+    d.e70 = e70_rom[e70_addr(ir, but_dest_l, ir_decode_h)];
+    d.e71 = (ir_decode_h && (ir & 0x7800) == 0) ? e71_rom[e71_addr(ir, psw)] : 0xF;
+    d.e74 = !(ir & 0x8000) ? e74_rom[e74_addr(ir, ir_decode_h)] : 0xFF;
+    return d;
+}
 
 /* Main micro-cycle execution */
 
@@ -329,93 +353,34 @@ uint32_t kd11ea_ustep(KD11EA *cpu) {
     if (cpu->halted)
         return 0;
 
-    /* WAIT: loop until interrupt (flow diagram sheet 17) */
-    if (cpu->waiting) {
-        uint8_t cpu_pri = (cpu->psw >> 5) & 7;
-        if (int_pending(&cpu->intc, cpu_pri) >= 0) {
-            cpu->waiting = 0;
-            /* Fall through to interrupt handler below */
-        } else {
-            cpu->ns_elapsed += CYCLE_SHORT_NS;
-            return CYCLE_SHORT_NS;
-        }
-    }
-
-    /* UNIBUS interrupt check at MPC 000 (between instructions) */
-    if (cpu->mpc == 0 && !cpu->ir_valid) {
-        uint8_t cpu_pri = (cpu->psw >> 5) & 7;
-        if (int_pending(&cpu->intc, cpu_pri) >= 0) {
-            IntRequest irq = int_ack(&cpu->intc, cpu_pri);
-            trace("IRQ: vec=%03o pri=%d PC=%06o PSW=%06o SP=%06o R0=%06o R1=%06o\n",
-                    irq.vector, irq.priority, PC(cpu), cpu->psw, cpu->sp[9],
-                    REG(cpu,0), REG(cpu,1));
-            /* Push PSW then PC via kernel-mode MMU translation */
-            uint16_t sp = cpu->sp[9];  /* slot 9 = R6/SP (kernel) */
-            sp -= 2;
-            {
-                uint32_t pba = sp;
-                if (cpu->mmu.sr0 & SR0_ENABLE)
-                    mmu_translate(&cpu->mmu, sp, 0, 1, PC(cpu), &pba);
-                bus_write(cpu->bus, pba, cpu->psw, BUS_DATO);
-            }
-            sp -= 2;
-            {
-                uint32_t pba = sp;
-                if (cpu->mmu.sr0 & SR0_ENABLE)
-                    mmu_translate(&cpu->mmu, sp, 0, 1, PC(cpu), &pba);
-                bus_write(cpu->bus, pba, PC(cpu), BUS_DATO);
-            }
-            cpu->sp[9] = sp;
-
-            /* Load new PC and PSW from vector */
-            uint16_t new_pc, new_psw;
-            {
-                uint32_t pba_pc = irq.vector;
-                uint32_t pba_psw = irq.vector + 2;
-                if (cpu->mmu.sr0 & SR0_ENABLE) {
-                    mmu_translate(&cpu->mmu, irq.vector, 0, 0, PC(cpu), &pba_pc);
-                    mmu_translate(&cpu->mmu, (irq.vector + 2) & 0xFFFF, 0, 0, PC(cpu), &pba_psw);
-                }
-                bus_read(cpu->bus, pba_pc, &new_pc);
-                bus_read(cpu->bus, pba_psw, &new_psw);
-            }
-            trace("  -> ISR PC=%06o PSW=%06o newSP=%06o\n",
-                    new_pc, new_psw, sp);
-            PC(cpu) = new_pc;
-            cpu->psw = new_psw;
-
-            dbg_record(&cpu->dbg, &(DbgEntry){
-                .mpc          = 0x1FF,  /* marker: IRQ delivery */
-                .next_mpc     = 0,
-                .a_leg        = irq.vector,
-                .b_leg        = new_pc,
-                .alu_out      = new_psw,
-                .ba           = cpu->sp[9],
-                .ir           = cpu->ir,
-                .psw          = cpu->psw,
-                .pc           = PC(cpu),
-                .sp           = cpu->sp[9],
-            });
-
-            /* ~2 micro-cycles for interrupt overhead */
-            cpu->ns_elapsed += 480;
-            return 480;
-        }
-    }
-
     uint64_t uw = ucode_read(cpu->mpc);
-    int nxm_abort = 0;  /* NXM: abort instruction, force MPC->000 */
+    /* IR DECODE (1) H (E55) decodes in the cycle after LOAD IR. */
+    uint8_t ir_decode_1 = cpu->ir_valid;
+    uint16_t psw_before = cpu->psw;
+    uint8_t  ovx_before = cpu->ovx;
+    uint8_t  rot_cbit_before = cpu->rot_cbit;
+    uint16_t ir_before = cpu->ir;
+    uint16_t ir_pins_before = kd11ea_ir_pins(cpu);
+    uint16_t b_before = cpu->b_reg;
+    uint16_t bx_before = cpu->bx_reg;
+    uint8_t  kte_before = cpu->mmu_kte;
+    uint8_t  br_lines = int_br_lines(&cpu->intc);
+    uint8_t  e29_d = e29_rom[e29_addr((psw_before >> 5) & 7, 0, (br_lines >> 7) & 1,
+                                      (br_lines >> 6) & 1, (br_lines >> 5) & 1,
+                                      (br_lines >> 4) & 1)];
+    uint8_t  dbe = 0;
+    uint8_t  msyn = 0, ssyn = 0, timeout = 0;
+    int nxm_abort = 0;                  /* a bus abort sends MPC to 000 */
 
     trace("MPC=%03o  uw=%012llX", cpu->mpc, (unsigned long long)uw);
 
-    /* Decode expansion ROMs */
-    uint8_t alu_field = UW_ALU_FUNC(uw);       /* E99 ROM bits [23:19] */
+    uint8_t alu_field = UW_ALU_FUNC(uw);
     uint8_t e82_a = e82_addr(alu_field);
     uint8_t e82_d = e82_rom[e82_a];
-    uint8_t alu_s    = E82_ALU_S(e82_d);        /* 74S181 S3-S0 */
-    uint8_t alu_mode = E82_MODE(e82_d);         /* 74S181 M */
-    uint8_t alu_cin  = !E82_CIN_L(e82_d);       /* 74S181 Cn (active-low) */
-    uint8_t bleg     = E82_BLEG(e82_d);         /* BMUX select */
+    uint8_t alu_s    = E82_ALU_S(e82_d);
+    uint8_t alu_mode = E82_MODE(e82_d);
+    uint8_t alu_cin  = !E82_CIN_L(e82_d);
+    uint8_t bleg     = E82_BLEG(e82_d);
 
     uint8_t bbx_field = UW_BBXOVXDBE(uw);
     uint8_t e87_a = e87_addr(bbx_field);
@@ -423,13 +388,10 @@ uint32_t kd11ea_ustep(KD11EA *cpu) {
     uint8_t b_mode  = E87_B_MODE(e87_d);
     uint8_t bx_mode = E87_BX_MODE(e87_d);
 
-    /* Probe: ROM output accumulators (0xFF = not evaluated) */
-    uint8_t prb_e53 = 0xFF, prb_e54 = 0xFF;
-    uint8_t prb_e59 = 0xFF, prb_e60 = 0xFF;
-    uint8_t prb_e61 = 0xFF, prb_e63 = 0xFF;
-    uint8_t prb_e68 = 0xFF, prb_e69 = 0xFF, prb_e70 = 0xFF;
-    uint8_t prb_e71 = 0xFF, prb_e74 = 0xFF;
-    uint8_t prb_e83 = 0xFF, prb_e107 = 0xFF;
+    /* ROM outputs for the probe, 0xFF when not evaluated. */
+    uint8_t prb_e54 = 0xFF;
+    prb_e54 = e54_rom[e54_addr(kd11ea_ir_pins(cpu), (cpu->psw >> 15) & 1)];
+    uint8_t prb_e107 = 0xFF;
     uint8_t prb_e51 = 0xFF, prb_e52 = 0xFF;
 
     /* Scratchpad read (ALU A-input). DST resolved after LOAD_BA. */
@@ -440,253 +402,186 @@ uint32_t kd11ea_ustep(KD11EA *cpu) {
     /* AUX CONTROL: E83 (DOP) or E61/E62 (SOP) override E99 ALU function.
      * Note: TM-001 calls E83 "E81" but E81 is the 7437 buffer on the board. */
     if (aux_control) {
-        uint8_t op = (cpu->ir >> 12) & 0xF;
-
-        bleg = BLEG_BREG;  /* B register carries the operand */
-
-        if (op == 0x0 || op == 0x8) {
-            /* SOP: E61 provides FUNC CODE, E62 provides shift control */
-            uint8_t cbit = cpu->psw & 1;
-            uint8_t nbit = (cpu->psw >> 3) & 1;
-            uint8_t fc = e61_rom[e61_addr(cpu->ir, cbit, nbit)];
-
-            /* E61 -> E71 latch -> E82. Build alu_field for e82_addr() */
-            uint8_t e82_field = (0) |                    /* bit0 = E106 = 0 */
-                                (((fc >> 3) & 1) << 1) | /* bit1 = FC03 */
-                                (((fc >> 2) & 1) << 2) | /* bit2 = FC02 */
-                                (((fc >> 1) & 1) << 3) | /* bit3 = FC01 */
-                                ((fc & 1) << 4);         /* bit4 = FC00 */
-            uint8_t e82_a = e82_addr(e82_field);
-            uint8_t e82_d = e82_rom[e82_a];
-
-            alu_s    = E82_ALU_S(e82_d);
-            alu_mode = E82_MODE(e82_d);
-            alu_cin  = !E82_CIN_L(e82_d);
-            bleg     = E82_BLEG(e82_d);
-        } else {
-            /* DOP: E83 -> E81 -> ALU (bypasses E82). dop_alu[] from TM-001 Table 4-9.
-             * SUB: 74S181 only has A-B, not B-A. Swap A/B legs so A=dest, B=source. */
-            if (op == 0xE) {
-                /* SUB: A=dest(sp[4]), B=source(sp[5]) → A-B = dest-src */
-                spa_src = 4;
-            } else {
-                spa_src = 5;
-            }
-            uint8_t dop_d = dop_alu[op];
-            alu_s    = DOP_ALU_S(dop_d);
-            alu_mode = DOP_ALU_MODE(dop_d);
-            alu_cin  = DOP_ALU_CIN(dop_d);
-        }
+        uint8_t fc;
+        if (((cpu->ir >> 12) & 7) == 0)
+            fc = e61_rom[e61_addr(cpu->ir, cpu->psw & 1, (cpu->psw >> 3) & 1)] & 0xF;
+        else
+            fc = E83_FUNC_CODE(e83_rom[e83_addr(cpu->ir)]);
+        uint8_t e82_field = (alu_field & 1) |
+                            (((fc >> 3) & 1) << 1) |
+                            (((fc >> 2) & 1) << 2) |
+                            (((fc >> 1) & 1) << 3) |
+                            ((fc & 1) << 4);
+        e82_d    = e82_rom[e82_addr(e82_field)];
+        alu_s    = E82_ALU_S(e82_d);
+        alu_mode = E82_MODE(e82_d);
+        alu_cin  = !E82_CIN_L(e82_d);
+        bleg     = E82_BLEG(e82_d);
     }
 
-    uint16_t a_leg = cpu->sp[spa_src & 0xF];  /* ALU A-input */
-    uint16_t b_leg = bmux_select(cpu, bleg);
+    uint16_t a_leg = cpu->sp[spa_src & 0xF];
 
-    /* SUB: patch b_leg to source (sp[5]) since BMUX can't read scratchpad */
-    if (aux_control && ((cpu->ir >> 12) & 0xF) == 0xE) {
-        b_leg = cpu->sp[5];  /* source operand (sp[5] = R12 temp) */
-    }
+    /* BYTE H (E64, K2-5) is NAND of IR DECODE (1) L and E68 BYTE L. */
+    uint8_t ir_decode_h = ir_decode_1;
+    uint8_t byte_h = !E68_BYTE_L(e68_rom[e68_addr(kd11ea_ir_pins(cpu))]) || ir_decode_h;
 
-    /* DISABLE MSYN+1 L (E37, K1-3): byte instructions force BMUX +1 to 0
-     * (CIN still gives +1). Only for PDP-11 regs (SPA 8-15), not internal
-     * temps. SP/PC always +2. Deferred modes (3,5) always +2. */
-    if (bleg == BLEG_PLUS1 && IS_BYTE_INSTR(cpu->ir)) {
-        uint8_t dst_mode = (cpu->ir >> 3) & 7;
-        uint8_t src_mode = (cpu->ir >> 9) & 7;
-        int is_deferred = 0;
-        if (UW_SPA_SRC_SEL(uw) == SPA_RD)
-            is_deferred = (dst_mode == 3 || dst_mode == 5);
-        else if (UW_SPA_SRC_SEL(uw) == SPA_RS)
-            is_deferred = (src_mode == 3 || src_mode == 5);
-        if (!is_deferred && (spa_src & 8) && spa_src != 9 && spa_src != 8) {
-            b_leg = 0;
-        }
-    }
+    /* E80 controls bytes and writes (K2-8). */
+    uint8_t buf_dat_tran = UW_BUF_DAT_TRAN(uw);
+    uint8_t ssmux_ctl = UW_SSMUX(uw);
+    uint8_t vba00 = UW_LOAD_BA(uw) ? (a_leg & 1) : (cpu->vba & 1);
+    uint8_t mov_l = E69_MOV_L(e69_rom[e69_addr(kd11ea_ir_pins(cpu), UW_MISC(uw) != MISC_BUT_DEST,
+                                               ir_decode_h)]);
+    uint8_t e86_11 = !(vba00 & buf_dat_tran);
+    uint8_t e112_10 = !e86_11;
+    uint8_t e80_a = e80_addr((ssmux_ctl >> 1) & 1, ssmux_ctl & 1, buf_dat_tran,
+                             aux_control, byte_h, e112_10, mov_l);
+    uint8_t e80_d = e80_rom[e80_a];
+    uint8_t e80_swap = E80_SWAP(e80_d);
+    uint8_t e80_sex  = E80_SEX(e80_d);
 
-    /* ALU: 4x 74S181 + 74S182 CLA */
+    /* A byte autoincrement steps by 1, except on R6 and R7 (K2-4). */
+    uint8_t r6_7 = (((15 - spa_src) >> 1) & 3) == 3;
+    uint8_t disable_msyn_plus1_l = k2_4_disable_msyn_plus1_l(
+        E80_DISAB_MSYN_L(e80_d), !r6_7, buf_dat_tran);
+    uint16_t b_leg = (bleg == BLEG_PLUS1 && !disable_msyn_plus1_l) ? 0 : bmux_select(cpu, bleg);
+
     uint8_t cout = 0;
     uint16_t alu_result = alu_74s181(a_leg, b_leg, alu_s, alu_mode, alu_cin, &cout);
 
     cpu->alu_out = alu_result;
     cpu->alu_cout = cout;
 
-    /* Diagnostic: trace INC at passc+020210 (PC=020214 after 2-word fetch) */
     trace("  ALU: A=%06o(%s[%o]) B=%06o S=%X M=%d Cin=%d -> %06o Cout=%d",
           a_leg,
           (const char*[]){"ROM","RS","RD","RBA"}[UW_SPA_SRC_SEL(uw)],
           spa_src,
           b_leg, alu_s, alu_mode, alu_cin, alu_result, cout);
 
-    /* E62 ROT/SHIFT ROM, gated by E84. Substitutes shifted value into alu_result. */
-    uint8_t e62_d = 0xF;  /* default: all float (no effect) */
-    uint8_t e62_b_mode = BMODE_HOLD;
-
-    if (aux_control && ((cpu->ir >> 12) & 7) == 0) {  /* E84 gate */
-        uint8_t sign_bit = (cpu->ir & 0x8000) ? 7 : 15;  /* byte/word */
-        uint8_t cc_n = (alu_result >> sign_bit) & 1;
-        e62_d = e62_rom[e62_addr(cpu->ir, cpu->b_reg & 1,
-                                 cpu->psw & 1, cc_n)];
-        e62_b_mode = E62_B_MODE(e62_d);
-
-        /* E62 overrides E87 HOLD via wire-OR */
-        b_mode |= e62_b_mode;
-
-        /* Apply same logical shift to alu_result (same inversion as breg_update) */
-        if (e62_b_mode == BMODE_SHIFT_R) {
-            /* Physical SHIFT_R = logical left */
-            uint8_t serial = E62_SERIAL_SHIFT(e62_d);
-            alu_result = (alu_result << 1) | (serial & 1);
-        } else if (e62_b_mode == BMODE_SHIFT_L) {
-            /* Physical SHIFT_L = logical right.
-             * Byte: serial -> bit 7, upper byte held (E14/E15 in HOLD). */
-            uint8_t serial = E62_SERIAL_SHIFT(e62_d);
-            if (sign_bit == 7) {
-                /* Byte: shift only low byte, serial → bit 7 */
-                alu_result = (alu_result & 0xFF00) |
-                             ((alu_result & 0xFF) >> 1) |
-                             ((uint16_t)(serial & 1) << 7);
-            } else {
-                /* Word: shift full 16 bits, serial → bit 15 */
-                alu_result = (alu_result >> 1) | ((uint16_t)serial << 15);
-            }
-        }
-    }
+    /* E62 acts on the step before an AUX step. */
+    uint8_t e62_a = e62_addr(ir_before, b_before & 1, psw_before & 1,
+                             (alu_result >> (byte_mux_ir(ir_before) ? 7 : 15)) & 1);
+    uint8_t e62_d = 0xF;                /* disabled outputs are pulled up */
 
     /* VBA register (E49/E40/E47, K1-6): loaded from scratchpad read bus
      * (not ALU output), so it captures the pre-increment value. */
     uint8_t load_ba = UW_LOAD_BA(uw);
+    /* RELOCATE H (E113, K1-8) comes from the SR0 enable, or from
+     * maintenance mode with ENAB MAINT. */
+    int relocate = (cpu->mmu.sr0 & SR0_ENABLE) ||
+                   ((cpu->mmu.sr0 & SR0_MAINT) && UW_ENAB_MAINT(uw));
     if (load_ba) {
-        uint16_t vba = a_leg & 0xFFFF;  /* Scratchpad read → VBA latch (K1-6) */
+        uint16_t vba = a_leg & 0xFFFF;
+        cpu->vba = vba;
 
-        /* KT11 MMU translation (3x 74S283 adders, K1-6/K1-7) */
-        int mmu_mode = (cpu->psw >> 14) & 3;  /* current mode from PSW[15:14] */
+        int mmu_mode = (cpu->psw >> 14) & 3;
         if (UW_FORCE_KERNEL(uw))
-            mmu_mode = 0;                      /* force kernel (trap vectors etc.) */
+            mmu_mode = 0;
         else if (!UW_PREV_MODE_L(uw))
-            mmu_mode = (cpu->psw >> 12) & 3;   /* previous mode (MFPI/MTPI) */
+            mmu_mode = (cpu->psw >> 12) & 3;
 
         uint32_t pba;
-        if (mmu_translate(&cpu->mmu, vba, mmu_mode,
-                          (UW_BUS_CTL(uw) >= BUS_DATO) ? 1 : 0,
-                          PC(cpu), &pba) < 0) {
-            cpu->mmu_abort = 1;
-            cpu->ba = 0;
-            trace("  BA <- %06o (VBA=%06o MMU ABORT)", cpu->ba, vba);
-        } else {
-            cpu->ba = pba;
-            trace("  BA <- %06o (VBA=%06o)", cpu->ba, vba);
-        }
+        mmu_translate(&cpu->mmu, vba, mmu_mode, MMU_MAP, relocate, PC(cpu), &pba);
+        cpu->ba = pba;
+        trace("  BA <- %06o (VBA=%06o)", cpu->ba, vba);
     }
 
-    /* Bus operations (before AMUX so UDATA is fresh) */
-    uint8_t buf_dat_tran = UW_BUF_DAT_TRAN(uw);
+    /* E95 and E30 (K1-5) choose a short or long cycle. This happens before
+     * a write can change SR0. */
+    uint32_t period_ns = clockgen_period_ns(cpu->timing, UW_LONG_CYCLE_L(uw),
+                                           UW_LOAD_BA(uw), relocate);
+    uint64_t msyn_ns = cpu->ns_elapsed + clockgen_msyn_ns(cpu->timing, period_ns);
     uint8_t bus_ctl = UW_BUS_CTL(uw);
 
-    /* DBE gating (K2-8): DATOB downgraded to DATO for word instructions */
-    if (bus_ctl == BUS_DATOB && !IS_BYTE_INSTR(cpu->ir)) {
+    /* UBUS C0 is BUF C0 AND BYTE H (K2-1), so a word DATOB becomes DATO. */
+    if (bus_ctl == BUS_DATOB && !byte_h) {
         bus_ctl = BUS_DATO;
     }
 
-    /* E80 Byte/Write Control ROM (K2-8): decodes SS + context -> SWAP, SEX */
     uint8_t amux_l = UW_AMUX_L(uw);
-    uint16_t amux_out = amux_select(cpu, amux_l, alu_result);  /* E22/E27 (74S157) */
-    uint8_t ssmux_ctl = UW_SSMUX(uw);
-    uint8_t ss01 = (ssmux_ctl >> 1) & 1;
-    uint8_t ss00 = ssmux_ctl & 1;
-    uint8_t byte_h = IS_BYTE_INSTR(cpu->ir) ? 1 : 0;
-    uint8_t vba00_bdt = (cpu->ba & 1) & buf_dat_tran;
-    /* MOV L from E69 latch: 0 = MOV/MOVB, 1 = other */
-    uint8_t mov_l = (((cpu->ir >> 12) & 7) == 1) ? 0 : 1;
-    uint8_t e80_a = e80_addr(ss01, ss00, buf_dat_tran, aux_control,
-                              byte_h, vba00_bdt, mov_l);
-    uint8_t e80_d = e80_rom[e80_a];
-    uint8_t e80_swap = E80_SWAP(e80_d);
-    uint8_t e80_sex  = E80_SEX(e80_d);
+    uint16_t amux_out = amux_select(cpu, amux_l, alu_result);
 
     uint16_t ss_out = ssmux_select(amux_out, e80_swap, e80_sex);
 
-    if (buf_dat_tran && cpu->mmu_abort) {
-        cpu->mmu_abort = 0;
-        cpu->mmu_kte = 1;
-        nxm_abort = 1;  /* terminate instruction, like NXM */
-        buf_dat_tran = 0;
-        trace("  BUS CYCLE CANCELLED (MMU ABORT)");
+    /* E83 (K1-8) sees UBUS C1 C0 when the transfer starts. Every KT abort
+     * is decided and latched here, not when BA was loaded. */
+    if (buf_dat_tran && cpu->mmu.page >= 0 && !cpu->mmu_abort) {
+        uint32_t pba;
+        if (mmu_translate(&cpu->mmu, cpu->vba, cpu->mmu.mode, bus_ctl, 1, PC(cpu), &pba) < 0)
+            cpu->mmu_abort = 1;
     }
 
+    /* An odd word address or a KT fault aborts the transfer (K2-1). */
+    K2BusAbort bus_abort = k2_1_bus_abort(disable_msyn_plus1_l,
+        !cpu->mmu_abort, buf_dat_tran, 1, 0, 0);
+    if (buf_dat_tran && bus_abort.abort_h) {
+        if (cpu->mmu_abort) {
+            cpu->mmu_abort = 0;
+            cpu->mmu_kte = 1;
+        }
+        if (!bus_abort.set_be_l)
+            cpu->bus_error = 1;
+        nxm_abort = 1;
+        buf_dat_tran = 0;
+        trace("  BUS CYCLE CANCELLED (E42 INHIBIT MSYN)");
+    }
+
+    msyn = buf_dat_tran;
     if (buf_dat_tran) {
         int bus_rc = 0;
         switch (bus_ctl) {
         case BUS_DATI:
         case BUS_DATIP:
-            bus_rc = bus_read(cpu->bus, cpu->ba, &cpu->unibus_data);
+            bus_rc = bus_read_at(cpu->bus, cpu->ba, &cpu->unibus_data, msyn_ns);
             trace("  BUS READ @%06o = %06o", cpu->ba, cpu->unibus_data);
-            /* Recompute AMUX/SSMUX now that unibus_data is updated */
             amux_out = amux_select(cpu, amux_l, alu_result);
             ss_out   = ssmux_select(amux_out, e80_swap, e80_sex);
             break;
         case BUS_DATO:
         case BUS_DATOB:
-            bus_rc = bus_write(cpu->bus, cpu->ba, ss_out, bus_ctl);
+            bus_rc = bus_write_at(cpu->bus, cpu->ba, ss_out, bus_ctl, msyn_ns);
+            /* The W bit (E81 and E123, K1-7) is set by a relocated write
+             * that is not aborted and does not go to a KT register. */
+            if (bus_rc >= 0 && cpu->mmu.page >= 0 && !mmu_kt_write(cpu->ba, bus_ctl & 1))
+                cpu->mmu.pdr[cpu->mmu.page] |= PDR_W;
             trace("  BUS WRITE @%06o <- %06o", cpu->ba, ss_out);
             break;
         }
         if (bus_rc < 0) {
-            cpu->bus_error = 1;
-            /* Abort instruction on NXM (Handbook S2.6), force MPC->000.
-             * Without this, MFPI pushes garbage on NXM, corrupts V6 nofault. */
+            /* Without SSYN, the timeout E14 sets BE and aborts the
+             * instruction. */
+            timeout = 1;
+            bus_abort = k2_1_bus_abort(disable_msyn_plus1_l, 1, 1, 1, 0, 1);
+            if (!bus_abort.set_be_l)
+                cpu->bus_error = 1;
             nxm_abort = 1;
             trace("  NXM PC=%06o IR=%06o BA=%06o", PC(cpu), cpu->ir, (unsigned)cpu->ba);
         }
+        ssyn = !timeout;
     }
 
-    /* B/BX register update */
-    /* SHIFT MUX (E119, 74153, K1-10):
-     *  F0 (SHIFT IN B):   C0=BREG[15], C1=SERIAL SHIFT, C2=GND, C3=BX[15]
-     *  F1 (SHIFT IN BX):  C0=ALU COUT, C1=OVX,          C2=+3V, C3=GND
-     *  BX DSR pin = B[0] (direct wire, not through E119). */
-    uint8_t shift_mux_l = E87_SHIFT_MUX_L(e87_d);
-    uint8_t shift_mux = shift_mux_l;  /* direct to E119 (no inversion) */
-    uint8_t shift_in_b, shift_in_bx;
+    /* LOAD PSW LOW L (E75, K1-10) follows a write to the PSW address. */
+    uint8_t load_psw_low = 0;
+    if (msyn && bus_ctl >= BUS_DATO && m8265_e54_io_page_enabled(cpu->ba) &&
+        m8265_e81_general_enabled(cpu->ba))
+        load_psw_low = !M8265_E75_LOAD_PSW_LOW_L(
+            m8265_e75_rom[m8265_e74_e75_addr(cpu->ba, (bus_ctl >> 1) & 1, bus_ctl & 1, 0)]);
 
-    /* Save before breg_update. BUT reads BX at start of cycle. */
-    uint8_t b_bit0 = cpu->b_reg & 1;
-    uint16_t bx_before = cpu->bx_reg;
-
-    if (e62_b_mode != BMODE_HOLD) {
-        /* E62 active: SERIAL SHIFT overrides E119 for B */
-        shift_in_b = E62_SERIAL_SHIFT(e62_d);
-        shift_in_bx = shift_in_b;  /* SOP shifts don't use BX */
-    } else {
-        /* E119 F0 (B): */
-        switch (shift_mux) {
-        default:
-        case 0: shift_in_b = (cpu->b_reg >> 15) & 1; break;  /* BREG[15] */
-        case 1: shift_in_b = E62_SERIAL_SHIFT(e62_d); break;
-        case 2: shift_in_b = 0; break;
-        case 3: shift_in_b = (cpu->bx_reg >> 15) & 1; break;
-        }
-        /* E119 F1 (BX): */
-        switch (shift_mux) {
-        default:
-        case 0: shift_in_bx = cout; break;          /* ALU COUT */
-        case 1: shift_in_bx = cpu->ovx; break;   /* OVX */
-        case 2: shift_in_bx = 1; break;           /* +3V */
-        case 3: shift_in_bx = 0; break;           /* GND */
-        }
+    /* On a double bus error (DBE, K2-3) the IR is cleared and E53 requests
+     * a HALT. */
+    if (k2_3_dbe_h(bus_abort.set_be_l, E87_ENAB_DBE_L(e87_d))) {
+        dbe = 1;
+        cpu->ir = 0;
+        cpu->serv_ir = 0;
+        uint8_t user_mode_h = !cpu->bus_error && ((cpu->psw >> 15) & 1);
+        uint8_t d53 = e53_rom[e53_addr(cpu->ir, user_mode_h)];
+        cpu->halt_rqst = !E53_HALT_RQST_L(d53);
+        cpu->halted = cpu->halt_rqst;
+        trace("  DBE H: IR cleared, HALT RQST L");
     }
-    breg_update(&cpu->b_reg, b_mode, ss_out, shift_in_b);
-
-    /* BX shift: SHIFT_L -> DSR = B[0], SHIFT_R -> DSL = E119 F1 */
-    uint8_t bx_shift_in;
-    if (bx_mode == BMODE_SHIFT_L)
-        bx_shift_in = b_bit0;
-    else
-        bx_shift_in = shift_in_bx;
-    breg_update(&cpu->bx_reg, bx_mode, ss_out, bx_shift_in);
 
     /* OVX sticky (E115 XOR, K1-10): set if BREG[15]^BREG[14], cleared at LOAD_IR */
     if (!E87_ENAB_OVX_L(e87_d)) {
-        if (((cpu->b_reg >> 15) ^ (cpu->b_reg >> 14)) & 1)
+        if (((b_before >> 15) ^ (b_before >> 14)) & 1)
             cpu->ovx = 1;
     }
 
@@ -694,70 +589,47 @@ uint32_t kd11ea_ustep(KD11EA *cpu) {
     uint8_t count_before = cpu->count;
 
     uint8_t misc = UW_MISC(uw);
-    switch (misc) {
+    /* An aborted transfer loads nothing. */
+    if (!nxm_abort) switch (misc) {
     case MISC_NOP:
         break;
     case MISC_LOAD_IR: {
         cpu->ir = cpu->unibus_data;
+        cpu->serv_ir = 0;
         cpu->ir_valid = 1;
-        cpu->ovx = 0;  /* E100: LOAD_IR clears OVX */
+        cpu->ovx = 0;
         /* SR2 = fetch address (PC not yet incremented), frozen while SR0 abort set */
         if (!(cpu->mmu.sr0 & SR0_ABORT_MASK))
             cpu->mmu.sr2 = PC(cpu);
 
-        /* E53 Trap Decode (K2-6): IR -> IR CODE + HALT RQST */
+        /* IR CODE is a wired OR of E53, E59, E74 and E70 (K2-6). */
         uint8_t user_mode = (cpu->psw >> 15) & 1;
         uint8_t e53_d;
         if (e53_enabled(cpu->ir)) {
             uint8_t e53_a = e53_addr(cpu->ir, user_mode);
             e53_d = e53_rom[e53_a];
         } else {
-            e53_d = 0xF;  /* OC disabled: float HIGH */
+            e53_d = 0xF;
         }
-        prb_e53 = e53_d;
         cpu->ir_code = e53_ir_code(e53_d);
         cpu->halt_rqst = !E53_HALT_RQST_L(e53_d);
 
-        /* Wire-OR: E59 and E74 also contribute to IR CODE bus */
         if (((cpu->ir >> 12) & 7) == 0) {
             uint8_t e59_d = e59_rom[e59_e60_addr(cpu->ir)];
-            prb_e59 = e59_d;
             cpu->ir_code |= e59_ir_code(e59_d);
         }
         if (!(cpu->ir & 0x8000)) {
             uint8_t e74_d = e74_rom[e74_addr(cpu->ir, 1)];
-            prb_e74 = e74_d;
             if (!E74_IR_CODE_00_L(e74_d))
                 cpu->ir_code |= 1;
         }
-
-        /* JMP/JSR mode 0: illegal (E53 can't catch these, IR[6]=1 disables it).
-         * Inject ir_code=1 -> vector 010. RT-11 relies on this. */
         {
-            uint16_t ir = cpu->ir;
-            uint8_t dst_mode = (ir >> 3) & 7;
-            if (dst_mode == 0) {
-                /* JMP: opcode 0001DD, i.e. IR[15:6] = 00_0000_01xx */
-                uint8_t is_jmp = ((ir >> 6) & 0x3FF) == 0x001;  /* IR[15:6]=0000000001 */
-                /* JSR: opcode 004RDD, i.e. IR[15:9] = 0000_100 */
-                uint8_t is_jsr = ((ir >> 9) & 0x7F) == 0x04;
-                if (is_jmp || is_jsr)
-                    cpu->ir_code = 1;  /* ILLEGAL → E52 → vector 010 */
-            }
+            uint8_t e70_d = e70_rom[e70_addr(cpu->ir, 1, 1)];
+            if (!E70_IR_CODE_00_L(e70_d))
+                cpu->ir_code |= 1;
         }
 
-        /* E54 Reset/Trap Control (K2-6): ENAB TBIT (RTT suppresses) */
-        uint8_t e54_a = e54_addr(cpu->ir, user_mode);
-        uint8_t e54_d = e54_rom[e54_a];
-        prb_e54 = e54_d;
-        cpu->enab_tbit = E54_ENAB_TBIT(e54_d);
-
-        /* E50 (7408): TBIT AND ENAB_TBIT -> E52 A0 */
-        uint8_t tbit = (cpu->psw >> 4) & 1;
-        cpu->tbit_trap = tbit & cpu->enab_tbit;
-
-        trace("  IR <- %06o  ir_code=%o halt=%d enab_tbit=%d tbit_trap=%d",
-              cpu->ir, cpu->ir_code, cpu->halt_rqst, cpu->enab_tbit, cpu->tbit_trap);
+        trace("  IR <- %06o  ir_code=%o halt=%d", cpu->ir, cpu->ir_code, cpu->halt_rqst);
         break;
     }
     case MISC_LOAD_PSW: {
@@ -766,15 +638,18 @@ uint32_t kd11ea_ustep(KD11EA *cpu) {
             /* Trap/interrupt: insert old current mode into previous mode */
             new_psw = (new_psw & ~0x3000) | ((cpu->psw & 0xC000) >> 2);
         }
-        cpu->psw = new_psw;
+        /* In user mode, RTI and RTT raise DISABLE LOAD PSW H (E54). It blocks
+         * LOAD PSW 12-15 L and the priority clock (E122 and E112, K1-2). */
+        if (E54_DISABLE_LOAD_PSW(prb_e54))
+            new_psw = (new_psw & ~0xF0E0) | (cpu->psw & 0xF0E0);
+        cpu->psw = new_psw & 0xF0FF;    /* no bits 11-8 */
         trace("  PSW <- %06o", cpu->psw);
         break;
     }
     case MISC_LOAD_CC: {
-        /* PSW MUX (E96, K1-1): AUX=0 -> SSMUX[3:0], AUX=1 -> CC logic */
-
-        if (!aux_control) {
-            /* PSW MUX selects SSMUX → PSW[3:0] = ss_out[3:0] */
+        /* Under AUX the PSW MUX (E96, K1-1) takes the CC logic. When the PSW
+         * itself is written (E115, E122) it takes the written data. */
+        if (!aux_control || load_psw_low) {
             cpu->psw = (cpu->psw & 0xFFF0) | (ss_out & 0xF);
             trace("  LOAD CC (SSMUX): N=%d Z=%d V=%d C=%d  PSW=%06o",
                   (ss_out >> 3) & 1, (ss_out >> 2) & 1,
@@ -782,15 +657,11 @@ uint32_t kd11ea_ustep(KD11EA *cpu) {
             break;
         }
 
-        /* AUX=1: E68 -> CC_CODE, E108 byte mux, E107 -> V,C. N,Z from wiring. */
-
-        uint8_t e68_val = e68_rom[e68_addr(cpu->ir)];  /* E68 (23-163A2, K2-6) */
-        prb_e68 = e68_val;
+        /* E68 gives the CC CODE and E107 gives V and C. N and Z come from
+         * the ALU (K1-10). */
+        uint8_t e68_val = e68_rom[e68_addr(cpu->ir)];
         uint8_t cc_code = E68_CC_CODE(e68_val);
-        /* BYTE MUX (E108, K1-10): byte_cc = BYTE_H OR (!E68_BYTE_L AND !IR[15]).
-         * Handles SWAB (byte CC despite IR[15]=0) and SUB (word CC despite E68). */
-        int is_byte = IS_BYTE_INSTR(cpu->ir) ||
-                      (!E68_BYTE_L(e68_val) && !(cpu->ir & 0x8000));
+        int is_byte = byte_mux(cpu);
 
         uint8_t sign_bit = is_byte ? 7 : 15;
         uint16_t z_mask = is_byte ? 0xFF : 0xFFFF;
@@ -800,14 +671,14 @@ uint32_t kd11ea_ustep(KD11EA *cpu) {
         uint8_t r_msb = (alu_result >> sign_bit) & 1;
         uint8_t s_msb = (a_leg >> sign_bit) & 1;
         uint8_t d_msb = (b_leg >> sign_bit) & 1;
-        uint8_t rot_cbit = E62_ROT_CBIT(e62_d);  /* ROT CBIT from E62 (→ E55 latch) */
+        uint8_t rot_cbit = rot_cbit_before;
         uint8_t psw_cbit = cpu->psw & 1;
 
-        uint8_t e107_val = e107_rom[e107_addr(r_msb, s_msb, d_msb,  /* E107 (23-164A2, K1-10) */
+        uint8_t e107_val = e107_rom[e107_addr(r_msb, s_msb, d_msb,
                                               rot_cbit, psw_cbit, cc_code)];
         prb_e107 = e107_val;
-        uint8_t cc_v = e107_val & 1;
-        uint8_t cc_c = (e107_val >> 1) & 1;
+        uint8_t cc_v = E107_CC_V(e107_val);
+        uint8_t cc_c = E107_CC_C(e107_val);
 
         cpu->psw = (cpu->psw & 0xFFF0) |
                    (cc_n << 3) | (cc_z << 2) | (cc_v << 1) | cc_c;
@@ -816,11 +687,14 @@ uint32_t kd11ea_ustep(KD11EA *cpu) {
               is_byte ? " byte" : "");
         break;
     }
-    case MISC_BUT_DEST:
-        /* Handled in next-MPC computation */
+    case MISC_BUT_DEST:                 /* see compute_next_mpc() */
         break;
     case MISC_ENAB_STOV:
-        /* TODO: compare SP against stack limit register */
+        /* E36 (K2-3) sets E29 when R6 is on the SPA lines and ALU 15-8 are
+         * zero. E29 is clocked in kernel mode only (E20). */
+        if (cpu->stov_en && !((psw_before >> 15) & 1) && 15 - (spa_src & 0xF) == 6 &&
+            (alu_result & 0xFF00) == 0)
+            cpu->stov = 1;
         break;
     case MISC_LOAD_COUNT:
         cpu->count = ss_out & 0x3F;
@@ -841,22 +715,15 @@ uint32_t kd11ea_ustep(KD11EA *cpu) {
     /* Resolve spa_dst after LOAD_BA (write-side uses end-of-cycle BA) */
     uint8_t spa_dst = spa_resolve(cpu, spa_dst_sel, uw);
 
-    uint8_t amux_sel = (~amux_l) & 3;
-    uint8_t suppress_load_ir_psw = (misc == MISC_LOAD_IR || misc == MISC_LOAD_PSW);
-    uint8_t is_dato = buf_dat_tran && (bus_ctl == BUS_DATO || bus_ctl == BUS_DATOB);
-    uint8_t rba_out_of_range = (spa_dst_sel == SPA_RBA) && (cpu->ba >= 0x10);
-    uint8_t rba_dato_suppress = (spa_dst_sel == SPA_RBA) && is_dato;
-    uint8_t spm_write_en = !suppress_load_ir_psw &&
-                           !rba_out_of_range &&
-                           !rba_dato_suppress &&
-                           ((amux_sel != 0) ||  /* ALU/PSW/const result */
-                            (!is_dato && buf_dat_tran) || /* bus read data (not during DATO) */
-                            load_ba);            /* address computation */
+    /* SP WRITE L (E37 and E91, K2-4) writes in every cycle unless SPA DST
+     * SEL is BA. The console path through E86 (SACK RET, K1-10) is not
+     * modelled. */
+    uint8_t spm_write_en = spa_dst_sel != SPA_RBA;
+    uint8_t sp_write = spm_write_en && !nxm_abort;
     if (spm_write_en && !nxm_abort) {
         uint16_t write_val = ss_out;
         /* E80 DISABLE UPPER: byte modify ops only write low byte */
         if (E80_DISABLE_UPPER(e80_d)) {
-            /* Byte modify op: preserve high byte from register, write low only */
             write_val = (cpu->sp[spa_dst & 0xF] & 0xFF00) | (write_val & 0xFF);
         }
         trace("  SPM[%o] <- %06o", spa_dst & 0xF, write_val);
@@ -870,60 +737,134 @@ uint32_t kd11ea_ustep(KD11EA *cpu) {
         cpu->sp[spa_dst & 0xF] = write_val;
     }
 
-    /* --- Next MPC --- */
+    /* Observe E52 before compute_next_mpc services and clears the inputs. */
+    uint16_t prb_e52_inputs = 0;
+    if (cpu->probe) {
+        uint8_t ed = e54_rom[e54_addr(kd11ea_ir_pins(cpu), cpu->psw >> 15)];
+        prb_e52_inputs = e52_addr(((cpu->psw >> 4) & 1) & E54_ENAB_TBIT(ed),
+                                  cpu->stov, cpu->bus_error, 0, cpu->mmu_kte,
+                                  0, cpu->ir_code, 1);
+    }
     uint16_t next_mpc = compute_next_mpc(cpu, uw, count_before, bx_before, a_leg);
+    if (UW_BUT_SERVICE(uw)) {
+        prb_e52 = cpu->svc_e52;
+        prb_e51 = cpu->svc_e51;
+    } else {
+        prb_e52 = 0xF;                  /* disabled, pulled up */
+        prb_e51 = e51_rom[e51_addr(0xF, 0)];
+    }
 
-    /* Diagnostic: trace MTPI (R1) MPC chain */
-
-    /* NXM abort: force MPC 000 for BUT SERVICE */
     if (nxm_abort)
         next_mpc = 0;
 
-    /* IR Decode and BUT SERVICE at MPC 000: service_trap overrides ir_decode */
     uint8_t  dbg_ir_decoded = 0;
     uint16_t dbg_ir_decode_mpc = 0;
     uint8_t  dbg_service = 0;
+    uint8_t  service_load_b = 0;
 
-    /* BUT SERVICE: fires at MPC 000 regardless of ir_valid */
-    if (cpu->mpc == 0 && cpu->service_trap) {
+    /* The service vector goes into B, from the constants for a trap or the
+     * D lines for an interrupt. */
+    uint8_t intr_this_cycle = 0;
+    if (UW_BUT_SERVICE(uw) && cpu->service_trap) {
         cpu->service_trap = 0;
+        intr_this_cycle = cpu->service_intr;
         dbg_service = 1;
-        /* AMUX S0 H forces vector onto bus, B captures it (TM-001 S4.11.2) */
-        cpu->b_reg = cpu->service_vector;
+        service_load_b = 1;
+        if (cpu->service_intr)
+            cpu->unibus_data = cpu->service_vector;
+        amux_out = ss_out = cpu->service_vector;
         trace("  BUT SERVICE override → MPC %03o (B←vec %03o)",
               next_mpc, cpu->service_vector);
-        cpu->ir_valid = 0;
         cpu->ir_code = 0;
         cpu->halt_rqst = 0;
         cpu->bus_error = 0;
-    } else if (cpu->mpc == 0 && cpu->ir_valid) {
+    }
+
+    /* With IR DECODE (1) the entry is ORed over the NEXT field, which is
+     * 000. */
+    if (ir_decode_1) {
         uint16_t ir_mpc = ir_decode_entry(cpu->ir, cpu->psw);
         trace("  IR DECODE -> MPC %03o", ir_mpc);
         cpu->ir_valid = 0;
         dbg_ir_decoded = 1;
         dbg_ir_decode_mpc = ir_mpc;
-
-        if (cpu->ir == 0x0001) {
-            /* WAIT: stay at MPC 000 until interrupt */
-            cpu->waiting = 1;
-            next_mpc = 0;
-            trace("  WAIT: entering wait state (PC=%06o PSW=%06o)",
-                  PC(cpu), cpu->psw);
-        } else {
-            next_mpc = ir_mpc;
-        }
-
+        next_mpc |= ir_mpc;
     }
+
+    /* E84 enables E62 on AUX SETUP H with IR 14-12 at 0. */
+    uint8_t aux_setup = UW_AUX_CONTROL(ucode_read(next_mpc));
+    if (aux_setup && ((ir_before >> 12) & 7) == 0)
+        e62_d = e62_rom[e62_a];
+
+    /* FUNC CODE, from E61 or E83 under AUX SETUP, for the probe only. */
+    uint8_t func_code = 0xF;
+    if (aux_setup) {
+        if (((ir_before >> 12) & 7) == 0) {
+            func_code = e61_rom[e61_addr(ir_before, psw_before & 1, (psw_before >> 3) & 1)] & 0xF;
+        } else {
+            func_code = E83_FUNC_CODE(e83_rom[e83_addr(ir_before)]);
+        }
+    }
+
+    /* B MODE 01 and 00 L are a wired AND of the open collector outputs of
+     * E87 and E62. */
+    b_mode &= E62_B_MODE_01_L(e62_d) | (E62_B_MODE_00_L(e62_d) << 1);
+
+    /* The SHIFT MUX (E119, K1-10) gives SHIFT IN B from B15, SERIAL SHIFT,
+     * 0 or BX15, and SHIFT IN BX from ALU COUT, OVX, 1 or 0. SHIFT IN 07
+     * (E108) is SERIAL SHIFT for a byte and B08 for a word. */
+    uint8_t shift_mux = E87_SHIFT_MUX_L(e87_d);
+    uint8_t shift_in_b, shift_in_bx;
+    switch (shift_mux) {
+    default:
+    case 0: shift_in_b = (b_before >> 15) & 1; break;
+    case 1: shift_in_b = E62_SERIAL_SHIFT(e62_d); break;
+    case 2: shift_in_b = 0; break;
+    case 3: shift_in_b = (bx_before >> 15) & 1; break;
+    }
+    switch (shift_mux) {
+    default:
+    case 0: shift_in_bx = cout; break;
+    case 1: shift_in_bx = ovx_before; break;
+    case 2: shift_in_bx = 1; break;
+    case 3: shift_in_bx = 0; break;
+    }
+    uint8_t shift_in_07 = byte_mux_ir(ir_before) ? E62_SERIAL_SHIFT(e62_d)
+                                                 : (b_before >> 8) & 1;
+    breg_update(&cpu->b_reg, b_mode, ss_out, shift_in_b, shift_in_07);
+
+    /* On a right shift BX takes B0. */
+    uint8_t bx_shift_in = (bx_mode == BMODE_SHIFT_R) ? (b_before & 1) : shift_in_bx;
+    breg_update(&cpu->bx_reg, bx_mode, ss_out, bx_shift_in, (bx_before >> 8) & 1);
+
+    if (service_load_b)
+        cpu->b_reg = cpu->service_vector;
+
+    cpu->rot_cbit = E62_ROT_CBIT(e62_d);
 
     trace("  -> MPC %03o  [PC=%06o R0=%06o B=%06o BX=%06o sp4=%06o]\n",
           next_mpc, PC(cpu), REG(cpu,0), cpu->b_reg, cpu->bx_reg, cpu->sp[4]);
 
-    /* Cycle duration (E106 delay line model) */
-    uint32_t cycle_ns = clockgen_cycle_ns(buf_dat_tran, bus_ctl,
-                                          UW_LONG_CYCLE_L(uw),
-                                          cpu->bus->last_latency_ns);
+    /* The cycle length comes from the K1-5 clock, TRAN INH (K2-1) and BG
+     * INH (K2-2). */
+    uint32_t cycle_ns = clockgen_cycle_ns(cpu->timing, period_ns,
+                                         buf_dat_tran, bus_ctl,
+                                         cpu->bus->last_latency_ns,
+                                         UW_BUT_SERVICE(uw), intr_this_cycle);
 
     cpu->ns_elapsed += cycle_ns;
+
+    /* The RESET instruction asserts BUS INIT while E16 runs, with the clock
+     * stopped (K2-2). */
+    uint8_t reset_inst = E54_START_RESET(prb_e54);
+    uint8_t reset_pulse = reset_inst && !cpu->reset_inst;
+    if (reset_pulse) {
+        bus_set_init(cpu->bus, 0, cpu->ns_elapsed);
+        cpu->ns_elapsed += clock_timing(cpu->timing)->reset_ns;
+        cycle_ns += clock_timing(cpu->timing)->reset_ns;
+        bus_set_init(cpu->bus, 1, cpu->ns_elapsed);
+    }
+    cpu->reset_inst = reset_inst;
 
     dbg_record(&cpu->dbg, &(DbgEntry){
         .mpc          = cpu->mpc,
@@ -955,10 +896,31 @@ uint32_t kd11ea_ustep(KD11EA *cpu) {
         .service_trap = dbg_service,
     });
 
-    /* Probe sampling */
     if (cpu->probe) {
+        DecodePins dp = decode_pins(ir_pins_before, psw_before, ir_decode_1,
+                                    misc != MISC_BUT_DEST);
         probe_sample(cpu->probe, &(ProbeSnapshot){
             .ns           = cpu->ns_elapsed,
+            .uw           = uw,
+            .uw_next      = ucode_read(next_mpc & 0x1FF),
+            .count        = count_before,
+            .amux_out     = amux_out,
+            .ss_out       = ss_out,
+            .slice_cout   = alu_74s181_slice_carries(a_leg, b_leg, alu_s, alu_mode, alu_cin),
+            .byte_mux     = (uint8_t)byte_mux_ir(ir_before),
+            .ovx          = ovx_before,
+            .b_mode       = b_mode,
+            .shift_in     = (uint8_t)((shift_in_b & 1) | ((shift_in_bx & 1) << 1) |
+                            ((shift_in_07 & 1) << 2)),
+            .cc_wires     = cc_wires(ir_before, a_leg, b_leg, alu_result, psw_before, rot_cbit_before),
+            .func_code    = func_code,
+            .rot_cbit     = rot_cbit_before,
+            .vba          = cpu->vba,
+            .mmu_mode     = mmu_mode_of(uw, psw_before),
+            .par_out      = cpu->mmu.par[mmu_index(uw, psw_before, cpu->vba)],
+            .pdr_out      = cpu->mmu.pdr[mmu_index(uw, psw_before, cpu->vba)],
+            .sr0          = cpu->mmu.sr0,
+            .sr2          = cpu->mmu.sr2,
             .mpc          = cpu->mpc,
             .next_mpc     = next_mpc,
             .a_leg        = a_leg,
@@ -966,10 +928,10 @@ uint32_t kd11ea_ustep(KD11EA *cpu) {
             .alu_out      = alu_result,
             .ba           = cpu->ba,
             .unibus_data  = cpu->unibus_data,
-            .ir           = cpu->ir,
-            .psw          = cpu->psw,
-            .b_reg        = cpu->b_reg,
-            .bx_reg       = cpu->bx_reg,
+            .ir           = ir_before,
+            .psw          = psw_before,
+            .b_reg        = b_before,
+            .bx_reg       = bx_before,
             .pc           = PC(cpu),
             .sp           = cpu->sp[9],
             .sp_user      = cpu->sp[1],
@@ -986,50 +948,77 @@ uint32_t kd11ea_ustep(KD11EA *cpu) {
             .bus_op       = buf_dat_tran ? ((bus_ctl <= BUS_DATIP) ? 1 : 2) : 0,
             .long_cycle   = UW_LONG_CYCLE_L(uw) ? 0 : 1,
             .buf_dat_tran = buf_dat_tran,
-            .ir_valid     = cpu->ir_valid,
+            .ir_valid     = ir_decode_1,
             .ir_code      = cpu->ir_code,
             .service_trap = dbg_service,
             .bus_error    = cpu->bus_error,
             .halted       = cpu->halted,
             .enab_tbit    = cpu->enab_tbit,
+            .kte          = kte_before,
+            .dbe          = dbe,
+            .br_lines     = br_lines,
+            .e29_out      = e29_d,
+            .bus_grant    = intr_this_cycle,
+            .intr         = intr_this_cycle,
+            .bus_init_l   = cpu->bus->init_l,
+            .reset_pulse  = reset_pulse,
+            .bus_c        = bus_ctl,
+            .msyn         = msyn,
+            .ssyn         = ssyn,
+            .timeout      = timeout,
+            .abort_h      = bus_abort.abort_h,
+            .set_be       = !bus_abort.set_be_l,
+            .dis_msyn_p1  = !disable_msyn_plus1_l,
+            .clk_long     = period_ns == clock_timing(cpu->timing)->long_ns,
+            .spa          = (uint8_t)(15 - (spa_src & 0xF)),
+            .spa_wr       = (uint8_t)(15 - (spa_dst & 0xF)),
+            .sp_write     = sp_write,
             .cycle_ns     = cycle_ns,
             .ssyn_ns      = buf_dat_tran ? cpu->bus->last_latency_ns : 0,
             .eot_ns       = buf_dat_tran ? clockgen_eot_ns(bus_ctl) : 0,
-            /* ROM raw outputs */
+            .e52_inputs   = prb_e52_inputs,
+            .e53_inputs   = e53_addr(ir_pins_before, psw_before >> 15),
+            .e53_selects  = ((ir_pins_before >> 6) & 1) |
+                            (!e53_enabled(ir_pins_before & ~0x40u) << 1),
+            .e54_inputs   = e54_addr(ir_pins_before, psw_before >> 15),
+            .e80_inputs   = e80_a,
             .e51_out      = prb_e51,
             .e52_code     = prb_e52,
-            .e53_out      = prb_e53,
+            .e53_out      = dp.e53,
             .e54_out      = prb_e54,
-            .e59_out      = prb_e59,
-            .e60_out      = prb_e60,
-            .e61_out      = prb_e61,
+            .e59_out      = dp.e59,
+            .e60_out      = dp.e60,
             .e62_out      = e62_d,
-            .e63_out      = prb_e63,
-            .e68_out      = prb_e68,
-            .e69_out      = prb_e69,
-            .e70_out      = prb_e70,
-            .e71_out      = prb_e71,
-            .e74_out      = prb_e74,
+            .e63_out      = dp.e63,
+            .e68_out      = e68_rom[e68_addr(ir_before)],
+            .e69_out      = dp.e69,
+            .e70_out      = dp.e70,
+            .e71_out      = dp.e71,
+            .e74_out      = dp.e74,
             .e80_out      = e80_d,
             .e82_out      = e82_d,
-            .e83_out      = prb_e83,
             .e87_out      = e87_d,
             .e102_out     = e102_rom[e102_addr(UW_BUT_BITS(uw))],
             .e107_out     = prb_e107,
         });
     }
 
+    /* After a service the IR reads 100000 until the next fetch (K2-3).
+     * cpu->ir keeps the last instruction for the debugger. */
+    if (UW_BUT_SERVICE(uw) && !cpu->halted)
+        cpu->serv_ir = 1;
+
     cpu->mpc = next_mpc;
     return cycle_ns;
 }
 
 
-/* Execute one full instruction (micro-cycles until MPC 000) */
+/* One instruction, that is micro-cycles until MPC 000. */
 
 uint32_t kd11ea_step(KD11EA *cpu) {
     uint32_t total_ns = 0;
     int cycles = 0;
-    int max_cycles = 1000;  /* safety limit */
+    int max_cycles = 1000;
 
     do {
         uint32_t ns = kd11ea_ustep(cpu);
@@ -1050,9 +1039,9 @@ uint32_t kd11ea_step(KD11EA *cpu) {
 void kd11ea_reset(KD11EA *cpu) {
     memset(cpu, 0, sizeof(*cpu));
 
-    /* Scratchpad (85S68): indeterminate at power-on.
-     * Seed from hostname for deterministic per-machine values.
-     * M9301-YF ODT needs SP pointing to valid RAM. */
+    /* The 85S68 scratchpad holds random values at power-on. They are drawn
+     * from the host name, so that each host always gets the same ones. The
+     * M9301-YF needs an SP that points into memory. */
     {
         char host[256];
         uint32_t seed = 0x11340034;  /* fallback */
@@ -1064,9 +1053,9 @@ void kd11ea_reset(KD11EA *cpu) {
     for (int i = 0; i < 16; i++)
         cpu->sp[i] = (uint16_t)(rand() & 0x7FFF);
 
-    cpu->mpc = 0;          /* SERVICE entry */
-    cpu->psw = 0x00E0;    /* priority 7, kernel mode */
-    cpu->sp[1] = 0;       /* USP slot */
+    cpu->mpc = 0;
+    cpu->psw = 0x00E0;    /* kernel, priority 7 */
+    cpu->sp[1] = 0;
     int_init(&cpu->intc);
     dbg_init(&cpu->dbg);
 }

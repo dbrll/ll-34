@@ -27,6 +27,8 @@
 
 typedef struct {
     unsigned mem_kb;    /* memory size, 248 KB max */
+    TimingKind timing;  /* zero-init = nominal (DEC values), AGED = measured */
+    unsigned rtc_hz;    /* line clock, 50 or 60, 0 = 60 */
 } MachineConfig;
 
 /* Why machine_run() returned */
@@ -35,7 +37,7 @@ typedef enum {
     MACHINE_STOP_HALT,          /* CPU halted by itself (HALT, error) */
     MACHINE_STOP_BREAKPOINT,    /* breakpoint hit, slot in bp_hit */
     MACHINE_STOP_STEP,          /* instruction or micro-step count reached */
-    MACHINE_STOP_HOST,          /* host_tick asked to stop */
+    MACHINE_STOP_HOST,          /* host_tick asked to stop (instruction end) */
 } MachineStop;
 
 typedef struct {
@@ -51,10 +53,13 @@ typedef struct {
     PC11      pc;
 
     /* Called before each device tick, from machine_run(). The frontend
-     * polls its host I/O here. A non-zero return stops the run. */
+     * polls its host I/O here. A non-zero return stops the run at the end
+     * of the current instruction, as the front panel HALT does. */
     int     (*host_tick)(void *ctx);
     void     *host_ctx;
     int       tick_counter;
+    int       host_stop;            /* stop asked, waiting for the boundary */
+    uint32_t  host_stop_usteps;     /* micro-steps since then */
 
     /* Debugger */
     uint16_t  bp_addr[MACHINE_MAX_BP];
@@ -80,6 +85,9 @@ void machine_bus_init(Machine *m);
 /* Reset the CPU state and cancel any pending step. Simulated time,
  * the probe, breakpoints and trace are kept. */
 void machine_cpu_reset(Machine *m);
+/* Administrative selection, CPU halted, no register/RAM/time reset. */
+int machine_set_timing_profile(Machine *m, TimingKind timing);
+int machine_set_rtc_hz(Machine *m, unsigned hz);
 
 /* Power-up sequence: fetch the PC/PS vector from the M9301 (773024). */
 void machine_power_on(Machine *m);
