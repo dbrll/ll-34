@@ -1,27 +1,28 @@
-# ll/34
+# ll-34
 
-ll/34 is a circuit-level emulator for the PDP-11/34A (1976), running a virtual CPU reverse-engineered from the schematics, microcode, and logic captures of an actual PDP-11/34A.
+ll-34 is a circuit-level emulator for the PDP-11/34A (1977), running a virtual CPU reverse-engineered from the schematics, microcode, and logic captures of an actual PDP-11/34A.
 
 It was originally designed as a digital replica of the real CPU to assist with troubleshooting at the signal level.
-Circuit-level (ROM truth tables + combinatorial logic) was chosen over gate-level (Verilog) because it is low-level enough to reproduce hardware bugs, yet fast enough to run programs.
+Circuit-level (ROM images + combinatorial logic) was chosen over gate-level (Verilog) because it is low-level enough to reproduce hardware bugs, yet fast enough to run programs.
 
 ## Architecture
 
 The source tree is organized as follows:
 
-| Directory    | Description                                                                                                                         |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `pdp11/`     | The machine: CPU, UNIBUS, peripherals, boot ROM, programmer console model, logic analyzer probe. `machine.c` assembles and runs it. |
-| `frontends/` | User interfaces: `cli/` (terminal), `wasm/` (browser GUI), `tty/` (host side of the serial line).                                   |
-| `demos/`     | Disk images and programs.                                                                                                           |
-| `docs/`      | DEC documentation.                                                                                                                  |
+| Directory     | Description                                                                                                                         |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `conformance/`| Logic captures and self-checking programs from the reference machine, against which ll-34 is tested.                                |
+| `pdp11/`      | The machine: CPU, UNIBUS, peripherals, boot ROM, programmer console model, logic analyzer probe. `machine.c` assembles and runs it. |
+| `frontends/`  | User interfaces: `cli/` (terminal), `wasm/` (browser GUI), `tty/` (host side of the serial line).                                   |
+| `demos/`      | Disk images and programs.                                                                                                           |
+| `docs/`       | DEC documentation converted to markdown.                                                                                            |
 
 The virtual CPU (`pdp11/kd11ea/`) replicates the clock generator, logic gates and ALU (simulated in C logic), stepping through the original microcode dumped from the ROMs.
 It is composed of the following components:
 
 | File           | Description                                                                                                                |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `roms/`        | ROM dumps (combinational and microcode).                                                                                   |
+| `roms/`        | ROM dumps and reconstructions (combinational and microcode).                                                               |
 | `kd11ea.c`     | CPU core. Steps through the microcode one micro-word per cycle. The 74xx gates and 74S181 bit-slice ALUs are modeled here. |
 | `rom_wiring.h` | Address wiring and output decoding for the combinatorial ROMs.                                                             |
 | `ucode_rom.h`  | Documents and assembles the CPU microcode into 512×48-bit micro-words.                                                     |
@@ -32,19 +33,18 @@ It is composed of the following components:
 
 ## Emulated devices
 
-The following devices have been implemented. As the Unibus is asynchronous, not all devices need to be timing or signal accurate.
+The following devices have been implemented. As the UNIBUS is asynchronous, not all devices need to be timing or signal accurate.
 
 The Programmer Console, in particular, uses a high-level emulation of its behavior rather than a low-level reconstruction of the Intel 8008 and wiring from its board.
 
 - UNIBUS backplane (timing and signal accurate)
 - KD11-EA CPU
 - M9301 boot card with original boot and diagnostic ROMs
-- DL11 serial card (timing accurate)
-- KW11 line clock (50/60 Hz)
+- DL11-W serial card with line clock (50 or 60 Hz)
 - Programmer Console (including maintenance mode for CPU and MPC troubleshooting)
 - RK05 drives (RK11 controller)
 - RL01 and RL02 drives (RL11 controller)
-- Tape reader
+- Paper tape reader and punch
 - VT100 terminal with stdio, TCP port or PTY modes
 
 Devices are plugged into the UNIBUS backplane (unibus.c), which performs address decoding, timing, and bus cycles.
@@ -62,13 +62,14 @@ The frontend is decoupled from the engine, so a photorealistic front panel GUI i
 
 The Debug Console provides an interactive debugger for both microcode-level and instruction-level code:
 
-- `s [n]`: single-step n micro-instructions with full state dump (MPC, ALU, bus, registers)
 - `b addr`: set PC breakpoint (octal), `bl` to list, `bd n` to delete
+- `c [addr] [n]`: core dump (octal)
 - `g`: resume execution
-- `u [addr] [n]`: disassemble instructions
-- `c [addr] [n]`: memory dump (octal)
 - `mmu`: show MMU state (kernel + user PAR/PDR, current mode marked)
+- `n [n]`: single-step n instructions
 - `r`: register dump
+- `s [n]`: single-step n micro-instructions with full state dump (MPC, ALU, bus, registers)
+- `u [addr] [n]`: disassemble instructions
 
 <figure>
 <p align="center">
@@ -76,7 +77,7 @@ The Debug Console provides an interactive debugger for both microcode-level and 
 <figcaption>
 </p>   
 <p align="center">
-<i>Debug console in the Web Assembly GUI.</i></figcaption>
+<i>Debug console in the WebAssembly GUI.</i></figcaption>
 </p>
 </figcaption>
 </figure>
@@ -85,11 +86,9 @@ The Debug Console provides an interactive debugger for both microcode-level and 
 
 Troubleshooting ll-34 during its development turned out to be so similar to troubleshooting the real hardware that an internal logic analyzer was implemented to trace the signals and probe the datapath. This proved instrumental in tracking down subtle ROM and timing bugs in the virtual CPU.
 
-The logic analyzer allows the probing of 107 signals, including 72 from the DEC schematics, 31 composite signals (registers, buses and flags), and 4 timing values from the emulator. Future versions will allow the capture of most signals from the schematics.
+The logic analyzer allows the probing of 488 signals from the CPU, named after the DEC prints. Sample rate is the real-time CPU clock (5,555,556 Hz) with a resolution of 180 ns per sample. A configurable divider reduces the sample rate for longer capture windows.
 
-Sample rate is the real-time CPU clock (5,555,556 Hz) with a resolution of 180 ns per sample. A configurable divider reduces the sample rate for longer capture windows.
-
-Captures use a ring buffer (up to 64K samples) with configurable trigger on any signal, adjustable trigger position (pre/post ratio), and CSV export for offline analysis.
+Captures use a ring buffer (up to 256K samples) with configurable trigger on any signal, adjustable trigger position (pre/post ratio), and VCD or sigrok export for offline analysis.
 
 <figure>
 <p align="center">
@@ -100,7 +99,7 @@ Captures use a ring buffer (up to 64K samples) with configurable trigger on any 
 <i>ll-34’s logic analyzer (bottom) can be used to troubleshoot the real hardware (top), just as the real hardware was used to troubleshoot ll-34.</i></figcaption>
 </p>
 </figcaption>
-<img width="1699" height="598" alt="ll-34's logic analyzer" src="https://github.com/user-attachments/assets/f4ed3018-5c5a-47db-a2de-bb2f127fffd1" />
+<img width="1699" height="598" alt="ll-34's logic analyzer" src="https://github.com/user-attachments/assets/298129b1-5a9b-4bef-b0b2-583afe4d40c1" />
 </figure>
 
 ## Sample Programs
@@ -126,7 +125,7 @@ built on a real PDP-11/34.
 ```
 
 The bootloader will print a minimal `@` prompt. Type `rkunix` and
-hit enters and a few seconds later you should get a `login:` prompt.
+hit Enter and a few seconds later you should get a `login:` prompt.
 Enter the username `root` with no password and you're in!
 One note is that `cd` is named `chdir` in early UNIX.
 
@@ -136,7 +135,7 @@ One note is that `cd` is named `chdir` in early UNIX.
 
 Verified to compile with no warnings on Linux (x86_64 and aarch64) with both musl and glibc, macOS aarch64, and NetBSD 10 aarch64.
 
-`make wasm` builds the WebAssembly version (requires Emscripten). `frontends/wasm/serve.sh` serves it on http://localhost:1134, and `frontends/wasm/deploy-pages.sh` publishes it on the `gh-pages` branch.
+`make wasm` builds the WebAssembly version (requires Emscripten). `go run frontends/wasm/serve.go` serves it on http://localhost:1134.
 
 ## Running
 
