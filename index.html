@@ -900,6 +900,9 @@
             .la-sig-alias {
                 color: #d2a8ff;
             }
+            .la-sig-loc {
+                color: #6e7681;
+            }
             .la-sig-desc {
                 color: #6e7681;
                 overflow: hidden;
@@ -2814,8 +2817,11 @@
             let laCatalogBuilt = false;
             const laInfo = {}; /* pin name -> { alias, desc } */
 
-            /* Label for a signal: alias when it has one, else the pin */
+            const LA_SHEET = /^(K[12]-\d+) /; /* DEC name: sheet first */
+
+            /* Label for a signal: its DEC name, else its alias, else the chip output */
             function laLabel(name) {
+                if (LA_SHEET.test(name)) return name;
                 const a = laInfo[name] && laInfo[name].alias;
                 return a || name;
             }
@@ -2859,10 +2865,12 @@
             function laGroupRank(g) {
                 const k = LA_GROUP_ORDER.indexOf(g);
                 if (k >= 0) return k;
-                if (g.startsWith("K1:")) return 100;
-                if (g.startsWith("K2:")) return 200;
-                if (g === "Emulator") return 400;
-                return 300;
+                const sheet = /^K([12])-(\d+)$/.exec(g);
+                if (sheet) return 100 + 20 * parseInt(sheet[1]) + parseInt(sheet[2]);
+                if (g.startsWith("K1:")) return 200;
+                if (g.startsWith("K2:")) return 300;
+                if (g === "Emulator") return 500;
+                return 400;
             }
 
             function laBuildCatalog() {
@@ -2872,17 +2880,33 @@
                 const sigs = [];
                 for (let i = 0; i < n; i++) {
                     const name = window._wasm_probe_sig_name(i);
-                    const alias = window._wasm_probe_sig_alias(i);
                     const desc = window._wasm_probe_sig_desc(i);
-                    laInfo[name] = { alias: alias, desc: desc };
+                    /* Tolerate an older module without these functions */
+                    let alias = "",
+                        group = "",
+                        loc = "";
+                    try {
+                        alias = window._wasm_probe_sig_alias(i) || "";
+                        group = window._wasm_probe_sig_group(i) || "";
+                        loc = window._wasm_probe_sig_loc(i) || "";
+                    } catch (_) {}
+                    laInfo[name] = { alias: alias, desc: desc, loc: loc };
                     const parts = name.split(":");
+                    const sheet = LA_SHEET.exec(name);
                     const g =
-                        window._wasm_probe_sig_group(i) ||
-                        (parts.length === 3 ? parts[0] + ":" + parts[1] : "Other");
-                    sigs.push({ i, name, alias, desc, g });
+                        group ||
+                        (sheet ? sheet[1] : parts.length === 3 ? parts[0] + ":" + parts[1] : "Other");
+                    sigs.push({ i, name, alias, desc, loc, g });
                 }
-                /* Stable sort: table order is kept inside a group */
-                sigs.sort((a, b) => laGroupRank(a.g) - laGroupRank(b.g) || (a.g < b.g ? -1 : a.g > b.g ? 1 : 0) || a.i - b.i);
+                /* Groups in order; names in alphabetical order inside a group,
+                 * the table order for the named groups (Registers...) */
+                const byName = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+                sigs.sort(
+                    (a, b) =>
+                        laGroupRank(a.g) - laGroupRank(b.g) ||
+                        (a.g < b.g ? -1 : a.g > b.g ? 1 : 0) ||
+                        (LA_GROUP_ORDER.includes(a.g) || a.g === "Emulator" ? a.i - b.i : byName(a, b)),
+                );
                 let html = "";
                 let group = null;
                 for (const x of sigs) {
@@ -2899,13 +2923,14 @@
                             (chip ? '<span class="la-grp-name">' + escHtml(chip) + "</span>" : "") +
                             "</div>";
                     }
-                    const key = (x.name + " " + x.alias + " " + x.desc + " " + chip).toLowerCase();
+                    const key = (x.name + " " + x.loc + " " + x.alias + " " + x.desc + " " + chip).toLowerCase();
                     html +=
                         '<div class="la-sig-row" data-name="' + escHtml(x.name) +
                         '" data-grp="' + escHtml(x.g) + '" data-key="' + escHtml(key) +
                         '" title="' + escHtml(x.desc) + '">' +
                         '<span class="mark">+</span>' +
                         '<span class="la-sig-name">' + escHtml(x.name) + "</span>" +
+                        (x.loc ? '<span class="la-sig-loc">' + escHtml(x.loc) + "</span>" : "") +
                         (x.alias && x.alias !== x.name
                             ? '<span class="la-sig-alias">' + escHtml(x.alias) + "</span>"
                             : "") +
@@ -3091,7 +3116,7 @@
                 let html = '<div class="la-lbl-hdr"></div>';
                 la.names.forEach((nm, s) => {
                     const info = laInfo[nm] || {};
-                    const tip = nm + (info.desc ? ": " + info.desc : "");
+                    const tip = nm + (info.loc ? " (" + info.loc + ")" : "") + (info.desc ? ": " + info.desc : "");
                     html +=
                         '<div class="la-lbl"><span class="nm" title="' + escHtml(tip) + '">' +
                         escHtml(laLabel(nm)) + '</span><span class="val" data-sig="' + s + '"></span>' +
@@ -3494,7 +3519,11 @@
             /* ================================================================
              * Emscripten module, defined before ll-34.js is loaded
              * ================================================================ */
+            /* Build version, set at deploy time. It goes into the URLs of
+             * ll-34.js and ll-34.wasm so a browser never mixes builds. */
+            const LL34_BUILD = "c16806c";
             var Module = {
+                locateFile: (path) => path + "?v=" + LL34_BUILD,
                 print: () => {},
                 printErr: (s) => {
                     if (s && !s.startsWith("wasm")) dbgLog("[ll-34] " + s);
@@ -3794,6 +3823,11 @@
                     );
                     window._wasm_probe_sig_group = Module.cwrap(
                         "wasm_probe_sig_group",
+                        "string",
+                        ["number"],
+                    );
+                    window._wasm_probe_sig_loc = Module.cwrap(
+                        "wasm_probe_sig_loc",
                         "string",
                         ["number"],
                     );
@@ -4271,6 +4305,8 @@
         </script>
 
         <!-- Emscripten glue and WASM, loaded after Module is defined -->
-        <script src="ll-34.js"></script>
+        <script>
+            document.write('<script src="ll-34.js?v=' + LL34_BUILD + '"><\/script>');
+        </script>
     </body>
 </html>
