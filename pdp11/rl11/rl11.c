@@ -28,6 +28,18 @@ static long chs_to_offset(int cyl, int hd, int sect) {
             (long)sect) * RL_NUMWD * 2;
 }
 
+/* DEC 9401 CRC: reflected CRC-16, initial value zero, LSB first. */
+static uint16_t header_crc(uint16_t header) {
+    uint16_t crc = 0;
+    for (int bit = 0; bit < 32; bit++) {
+        unsigned feedback = (crc ^ header) & 1;
+        crc >>= 1;
+        if (feedback) crc ^= 0120001;
+        header >>= 1; /* second header word is zero */
+    }
+    return crc;
+}
+
 static void rl11_set_done(RL11 *rl) {
     rl->rlcs |= RLCS_CRDY;
     if ((rl->rlcs & RLCS_IE) && rl->irq_set)
@@ -61,6 +73,10 @@ static void rl11_go(RL11 *rl) {
 
     switch (func) {
     case RLCS_F_GSTA: {
+        if (!(rl->rlda & RLDA_GS)) {
+            rl11_set_err(rl, RLCS_INCMP);
+            break;
+        }
         if (rl->rlda & RLDA_GS_CLR)
             rl->stat[drive] &= ~RLDS_ERR;
         uint16_t st = RLDS_LOCK | RLDS_BHO | RLDS_HDO;
@@ -71,7 +87,7 @@ static void rl11_go(RL11 *rl) {
         if (rl->hd[drive])
             st |= RLDS_HD;
         st |= rl->stat[drive] & RLDS_ERR;
-        rl->rlmp = st;
+        rl->rlmp = rl->mp_next = rl->mp_last = st;
 
         rl->rlcs |= RLCS_DRDY;
         break;
@@ -96,7 +112,10 @@ static void rl11_go(RL11 *rl) {
 
     case RLCS_F_RHDR: {
         rl->rlmp = (uint16_t)((rl->cyl[drive] << 7) |
-                              (rl->hd[drive] << 6));
+                              (rl->hd[drive] << 6) | rl->sect[drive]);
+        rl->mp_next = 0;
+        rl->mp_last = header_crc(rl->rlmp);
+        rl->sect[drive] = (rl->sect[drive] + 1) % RL_NUMSC;
         break;
     }
 
@@ -108,8 +127,14 @@ static void rl11_go(RL11 *rl) {
         int hd   = DA_HD(rl->rlda);
         int sect = DA_SECT(rl->rlda);
 
-        if (sect >= RL_NUMSC || cyl >= MAX_CYL(rl, drive)) {
-            rl11_set_err(rl, RLCS_INCMP | RLCS_DRE);
+        if (func == RLCS_F_RNOHDR) {
+            cyl = rl->cyl[drive];
+            hd = rl->hd[drive];
+            sect = rl->sect[drive];
+        }
+        if (sect >= RL_NUMSC || cyl != rl->cyl[drive] ||
+            cyl >= MAX_CYL(rl, drive)) {
+            rl11_set_err(rl, RLCS_INCMP | RLCS_DLT);
             rl11_set_done(rl);
             return;
         }
@@ -145,6 +170,7 @@ static void rl11_go(RL11 *rl) {
                         goto rd_xfer_done;
                     }
                     ma += 2;
+                    done_words++;
                 }
             } else {
                 for (size_t i = 0; i < got; i++) {
@@ -155,14 +181,12 @@ static void rl11_go(RL11 *rl) {
                         rl11_set_err(rl, RLCS_NXM);
                         goto rd_xfer_done;
                     }
-                    if (disk_word != mem_word) {
+                    if (disk_word != mem_word)
                         rl11_set_err(rl, RLCS_CRC);
-                        goto rd_xfer_done;
-                    }
                     ma += 2;
+                    done_words++;
                 }
             }
-            done_words += (uint32_t)got;
         }
 
     rd_xfer_done:
@@ -171,10 +195,14 @@ static void rl11_go(RL11 *rl) {
         rl->rlcs = (rl->rlcs & ~RLCS_MEX) |
                    (uint16_t)(((ma >> 16) & 3) << 4);
 
-        sect += (int)(done_words / RL_NUMWD);
-        rl->rlda = (uint16_t)((cyl << RLDA_V_CYL_RW) |
-                              (hd << RLDA_V_HD) |
-                              (sect & RLDA_M_SECT));
+        int sectors = (int)((done_words + RL_NUMWD - 1) / RL_NUMWD);
+        sect += sectors;
+        if (func == RLCS_F_RNOHDR)
+            rl->rlda += sectors;
+        else
+            rl->rlda = (uint16_t)((cyl << RLDA_V_CYL_RW) |
+                                  (hd << RLDA_V_HD) | sect);
+        rl->sect[drive] = sect % RL_NUMSC;
 
         if (rl->rlmp != 0)
             rl11_set_err(rl, RLCS_INCMP | RLCS_DLT);  /* HDE = DLT+INCMP */
@@ -189,8 +217,9 @@ static void rl11_go(RL11 *rl) {
         int hd   = DA_HD(rl->rlda);
         int sect = DA_SECT(rl->rlda);
 
-        if (sect >= RL_NUMSC || cyl >= MAX_CYL(rl, drive)) {
-            rl11_set_err(rl, RLCS_INCMP | RLCS_DRE);
+        if (sect >= RL_NUMSC || cyl != rl->cyl[drive] ||
+            cyl >= MAX_CYL(rl, drive)) {
+            rl11_set_err(rl, RLCS_INCMP | RLCS_DLT);
             rl11_set_done(rl);
             return;
         }
@@ -222,31 +251,38 @@ static void rl11_go(RL11 *rl) {
         while (done_words < wc) {
             size_t to_write = (wc - done_words > RL_NUMWD) ? RL_NUMWD : (wc - done_words);
 
+            memset(buf, 0, sizeof(buf));
+            size_t fetched = 0;
             for (size_t i = 0; i < to_write; i++) {
                 uint16_t word;
                 uint32_t addr = ma & 0x3FFFF;
                 if (bus_read(bus, addr, &word) < 0) {
                     rl11_set_err(rl, RLCS_NXM);
-                    goto wr_xfer_done;
+                    break;
                 }
                 buf[i*2]     = (uint8_t)(word & 0xFF);
                 buf[i*2 + 1] = (uint8_t)(word >> 8);
                 ma += 2;
+                fetched++;
             }
-            fwrite(buf, 2, to_write, rl->disk[drive]);
-            done_words += (uint32_t)to_write;
+            /* Hardware writes the entire final sector, zero filling its tail. */
+            if (fetched && fwrite(buf, 2, RL_NUMWD, rl->disk[drive]) != RL_NUMWD) {
+                rl11_set_err(rl, RLCS_INCMP);
+                break;
+            }
+            done_words += (uint32_t)fetched;
+            if (fetched != to_write) break;
         }
 
-    wr_xfer_done:
         rl->rlmp = (uint16_t)((rl->rlmp + (done_words & 0xFFFF)) & 0xFFFF);
         rl->rlba = (uint16_t)(ma & 0xFFFF);
         rl->rlcs = (rl->rlcs & ~RLCS_MEX) |
                    (uint16_t)(((ma >> 16) & 3) << 4);
 
-        sect += (int)(done_words / RL_NUMWD);
+        sect += (int)((done_words + RL_NUMWD - 1) / RL_NUMWD);
+        rl->sect[drive] = sect % RL_NUMSC;
         rl->rlda = (uint16_t)((cyl << RLDA_V_CYL_RW) |
-                              (hd << RLDA_V_HD) |
-                              (sect & RLDA_M_SECT));
+                              (hd << RLDA_V_HD) | sect);
 
         if (rl->rlmp != 0)
             rl11_set_err(rl, RLCS_INCMP | RLCS_DLT);
@@ -284,7 +320,11 @@ static int rl11_read(void *dev, uint32_t addr, uint16_t *data) {
     }
     case 1: *data = rl->rlba; break;
     case 2: *data = rl->rlda; break;
-    case 3: *data = rl->rlmp; break;
+    case 3:
+        *data = rl->rlmp;
+        rl->rlmp = rl->mp_next;
+        rl->mp_next = rl->mp_last;
+        break;
     }
     return 0;
 }
@@ -315,17 +355,21 @@ static int rl11_write(void *dev, uint32_t addr, uint16_t data, int is_byte) {
                    (data & (RLCS_FUNC | RLCS_MEX | RLCS_IE | RLCS_DRIVE));
         /* CRDY=1 in data: no command, just update IE */
         if (data & RLCS_CRDY) {
+            if ((rl->rlcs & (RLCS_IE | RLCS_CRDY)) == (RLCS_IE | RLCS_CRDY)) {
+                if (rl->irq_set) rl->irq_set(rl->irq_ctx, 0160, 5);
+            } else if (rl->irq_clr) rl->irq_clr(rl->irq_ctx, 0160);
             break;
         }
         if (rl->rlcs & RLCS_CRDY) {
             rl->rlcs &= ~(RLCS_CRDY | RLCS_ALLERR);
+            if (rl->irq_clr) rl->irq_clr(rl->irq_ctx, 0160);
             rl11_go(rl);
         }
         break;
     }
     case 1: rl->rlba = data & 0xFFFE; break;
     case 2: rl->rlda = data; break;
-    case 3: rl->rlmp = data; break;
+    case 3: rl->rlmp = rl->mp_next = rl->mp_last = data; break;
     }
     return 0;
 }

@@ -102,7 +102,8 @@ int bus_write(Bus *bus, uint32_t addr, uint16_t data, int type) {
     bus->timed_access = 0;
     addr &= 0x3FFFF;
     int is_byte = (type == BUS_DATOB);
-    BusDevice *d = bus_lookup(bus, addr & ~(is_byte ? 0 : 1));
+    /* Decode the word address, keeping A00 for the slave's byte selection. */
+    BusDevice *d = bus_lookup(bus, addr & ~1u);
     if (!d) {
         bus->last_latency_ns = 22000;
         bus->nxm = 1;

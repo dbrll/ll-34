@@ -10,6 +10,8 @@
 #include "rk11.h"
 #include "../trace.h"
 
+#define RK_REV_NS     40000000ULL /* 1500 rpm */
+
 #define DA_SECT(da)   ((da) & RKDA_SECT)
 #define DA_SURF(da)   (((da) >> 4) & 1)
 #define DA_CYL(da)    (((da) >> 5) & 0xFF)
@@ -64,6 +66,10 @@ static void rk05_go(RK05 *rk) {
         return;
     }
 
+    if (func == RKCS_DRVRESET) {
+        da &= RKDA_DRIVE;
+        rk->rkda = da;
+    }
     if (DA_SECT(da) >= RK_NUMSC) {
         rk->rker |= RKER_NXS;
         rk05_update_err(rk);
@@ -77,6 +83,12 @@ static void rk05_go(RK05 *rk) {
         return;
     }
 
+    if (func == RKCS_SEEK || func == RKCS_DRVRESET) {
+        rk->rkcs |= RKCS_SCP;
+        rk05_set_done(rk);
+        return; /* positioning must not consume WC or advance BA/DA */
+    }
+
     /* Word count (2's complement) */
     uint32_t wc = (0x10000 - rk->rkwc) & 0xFFFF;
     if (wc == 0) wc = 0x10000;
@@ -85,6 +97,27 @@ static void rk05_go(RK05 *rk) {
 
     uint32_t sector = da_to_sector(da);
     long file_offset = (long)sector * RK_NUMWD * 2;
+
+    /* Format reads return one cylinder header per sector, not disk data. */
+    if (func == RKCS_READ && (rk->rkcs & RKCS_FMT)) {
+        uint32_t completed = 0;
+        while (completed < wc) {
+            uint32_t current = sector + completed;
+            if (current >= RK_SECT_PER_DRIVE) {
+                rk->rker |= RKER_OVR;
+                break;
+            }
+            uint16_t header = (uint16_t)((current / (RK_NUMSF * RK_NUMSC)) << 5);
+            if (bus_write(bus, ma & 0x3FFFF, header, BUS_DATO) < 0) {
+                rk->rker |= RKER_NXM;
+                break;
+            }
+            if (!(rk->rkcs & RKCS_INH)) ma += 2;
+            completed++;
+        }
+        wc = completed;
+        goto xfer_done;
+    }
 
     switch (func) {
     case RKCS_READ:
@@ -166,11 +199,6 @@ static void rk05_go(RK05 *rk) {
         break;
     }
 
-    case RKCS_SEEK:
-    case RKCS_DRVRESET:
-        rk->rkcs |= RKCS_SCP;
-        break;
-
     case RKCS_WLK:
         break;
 
@@ -184,7 +212,9 @@ xfer_done:
     rk->rkba = (uint16_t)(ma & 0xFFFF);
     rk->rkcs = (rk->rkcs & ~RKCS_MEX) | (uint16_t)((ma >> 12) & RKCS_MEX);
 
-    uint32_t new_sector = sector + (wc + RK_NUMWD - 1) / RK_NUMWD;
+    uint32_t new_sector = sector +
+        ((func == RKCS_READ && (rk->rkcs & RKCS_FMT)) ? wc :
+         (wc + RK_NUMWD - 1) / RK_NUMWD);
     uint32_t cyl  = new_sector / (RK_NUMSF * RK_NUMSC);
     uint32_t surf = (new_sector / RK_NUMSC) % RK_NUMSF;
     uint32_t sect = new_sector % RK_NUMSC;
@@ -202,7 +232,9 @@ static int rk05_read(void *dev, uint32_t addr, uint16_t *data) {
     switch (reg) {
     case 0: {
         int drv = DA_DRIVE(rk->rkda);
-        rk->rkds = RKDS_RK05 | RKDS_SC_OK | (uint16_t)(drv << 13);
+        unsigned sector = (unsigned)((rk->bus->now_ns % RK_REV_NS) * RK_NUMSC / RK_REV_NS);
+        rk->rkds = RKDS_RK05 | RKDS_SC_OK | (uint16_t)(drv << 13) | sector;
+        if (sector == DA_SECT(rk->rkda)) rk->rkds |= RKDS_ON_SC;
         if (rk->disk[drv]) {
             rk->rkds |= RKDS_RDY | RKDS_RWS;
             if (rk->read_only[drv])
@@ -229,8 +261,21 @@ static int rk05_read(void *dev, uint32_t addr, uint16_t *data) {
 static int rk05_write(void *dev, uint32_t addr, uint16_t data, int is_byte) {
     RK05 *rk = (RK05 *)dev;
     int reg = (addr >> 1) & 7;
-    (void)is_byte;
     if (!rk->init_l) return 0;
+
+    if (is_byte) {
+        uint16_t cur = 0;
+        switch (reg) {
+        case 2: cur = rk->rkcs; break;
+        case 3: cur = rk->rkwc; break;
+        case 4: cur = rk->rkba; break;
+        case 5: cur = rk->rkda; break;
+        }
+        if (addr & 1)
+            data = (cur & 0x00FF) | ((data & 0xFF) << 8);
+        else
+            data = (cur & 0xFF00) | (data & 0xFF);
+    }
 
     switch (reg) {
     case 2:
@@ -238,7 +283,12 @@ static int rk05_write(void *dev, uint32_t addr, uint16_t data, int is_byte) {
                    (data & ~(RKCS_DONE | RKCS_SCP | RKCS_HERR | RKCS_ERR | RKCS_GO));
         if ((data & RKCS_GO) && (rk->rkcs & RKCS_DONE)) {
             rk->rkcs &= ~RKCS_DONE;
+            if (rk->irq_clr) rk->irq_clr(rk->irq_ctx, 0220);
             rk05_go(rk);
+        } else if ((rk->rkcs & (RKCS_IE | RKCS_DONE)) == (RKCS_IE | RKCS_DONE)) {
+            if (rk->irq_set) rk->irq_set(rk->irq_ctx, 0220, 5);
+        } else if (!(rk->rkcs & RKCS_IE) && rk->irq_clr) {
+            rk->irq_clr(rk->irq_ctx, 0220);
         }
         break;
     case 3: rk->rkwc = data; break;

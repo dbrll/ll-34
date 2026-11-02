@@ -82,11 +82,13 @@
 typedef struct {
     uint8_t init_l;    /* received BUS INIT L */
     uint16_t rlcs, rlba, rlda, rlmp;
+    uint16_t mp_next, mp_last; /* Read Header silo */
     FILE    *disk[RL_NUMDR];
     int      read_only[RL_NUMDR];
     int      is_rl02[RL_NUMDR];
     uint16_t cyl[RL_NUMDR];
     uint16_t hd[RL_NUMDR];
+    uint16_t sect[RL_NUMDR]; /* next sector */
     uint16_t stat[RL_NUMDR];
     Bus     *bus;
     void (*irq_set)(void *ctx, uint16_t vector, uint8_t priority);
