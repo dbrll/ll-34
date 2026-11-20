@@ -9,13 +9,13 @@ Circuit-level (ROM images + combinatorial logic) was chosen over gate-level (Ver
 
 The source tree is organized as follows:
 
-| Directory     | Description                                                                                                                         |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `conformance/`| Logic captures and self-checking programs from the reference machine, against which ll-34 is tested.                                |
-| `pdp11/`      | The machine: CPU, UNIBUS, peripherals, boot ROM, programmer console model, logic analyzer probe. `machine.c` assembles and runs it. |
-| `frontends/`  | User interfaces: `cli/` (terminal), `wasm/` (browser GUI), `tty/` (host side of the serial line).                                   |
-| `demos/`      | Disk images and programs.                                                                                                           |
-| `docs/`       | DEC documentation converted to markdown.                                                                                            |
+| Directory      | Description                                                                                                                         |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `conformance/` | Logic captures and self-checking programs from the reference machine, against which ll-34 is tested.                                |
+| `pdp11/`       | The machine: CPU, UNIBUS, peripherals, boot ROM, programmer console model, logic analyzer probe. `machine.c` assembles and runs it. |
+| `frontends/`   | User interfaces: `cli/` (terminal), `wasm/` (browser GUI), `tty/` (host side of the serial line).                                   |
+| `demos/`       | Disk images and programs.                                                                                                           |
+| `docs/`        | DEC documentation and schematics transcribed to markdown and Verilog.                                                               |
 
 The virtual CPU (`pdp11/kd11ea/`) replicates the clock generator, logic gates and ALU (simulated in C logic), stepping through the original microcode dumped from the ROMs.
 It is composed of the following components:

@@ -11,25 +11,21 @@
 - [Appendix A — Glossary](#appendix-a-glossary-of-unibus-terms)
 - [Appendix B — Unibus Hardware](#appendix-b-unibus-hardware)
 
-<!-- Source PDF page 9 -->
-
 ## Preface
 
 This document consists of five sections: Introduction, Signals, Protocol, Interface Design Guidelines, and Unibus Configurations, as well as two appendices, one being a Glossary of Terms, and the other a list of Unibus Hardware.
 
 Section 1 includes Unibus definitions, architecture, and protocol. Section 2 contains signal information about different types of signal lines and signal transmission, followed by an analysis of priority arbitration, data transfer, and initialization. Section 3 is an expanded treatment of Unibus protocols — definitions and concepts, priority arbitration and data transfer transactions, and initialization. Section 4 describes the guidelines for designing interfaces. It contains paragraphs on general information, preferred chips, unit loads, PC etches, backplanes, grounding, logic design guidelines, and master devices. Section 5 is a thorough-going description of the Unibus configuration. It contains a general introduction, definitions, and configuration rules.
 
-<!-- Source PDF page 10 -->
-
-## Section 1: Introduction
+## Section 1: INTRODUCTION
 
 This section defines the Unibus in terms of its components, the arrangement of these components into systems, and the various types of operations that are transacted in a system.
 
-### 1.1 Unibus Definition
+### 1.1 UNIBUS DEFINITION
 
-A bus is a set of electrical circuits that interconnect the various parts of a computing system. The Unibus is a type of bus that is defined by its architecture, its protocol, and its electrical characteristics. The Unibus is defined by this specification. The word “bus," when used in this specification, is synonymous with the word “Unibus."
+A bus is a set of electrical circuits that interconnect the various parts of a computing system. The Unibus is a type of bus that is defined by its architecture, its protocol, and its electrical characteristics. The Unibus is defined by this specification. The word "bus," when used in this specification, is synonymous with the word "Unibus."
 
-### 1.2 Unibus Architecture
+### 1.2 UNIBUS ARCHITECTURE
 
 The Unibus is a linear bus that consists of a transmission medium to which the component parts of a system are attached at various points as shown below:
 
@@ -41,9 +37,9 @@ The elements of the Unibus and their interconnection are described in the follow
 
 ##### 1.2.1.1 Unibus Transmission Medium
 
-The Unibus transmission medium interconnects the component parts, called “bus devices," of a system. The transmission medium consists of the following elements:
+The Unibus Transmission medium interconnects the component parts, called "bus devices," of a system. The transmission medium consists of the following elements:
 
-- **a.** Drivers and receivers for the signals transmitted on the 56 signal lines. A “driver" or “bus driver" is a circuit used by a device to transmit signals to the Unibus; a "receiver" or “bus receiver" is a circuit used by a bus device to receive signals from the Unibus. These drivers <!-- Source PDF page 11 --> and receivers are physically located in the bus devices, but are electrically part of the Unibus. A bus device contains drivers and/or receivers only for the bus signals that it uses.
+- **a.** Drivers and receivers for the signals transmitted on the 56 signal lines. A "driver" or "bus driver" is a circuit used by a device to transmit signals to the Unibus; a "receiver" or "bus receiver" is a circuit used by a bus device to receive signals from the Unibus. These drivers and receivers are physically located in the bus devices, but are electrically part of the Unibus. A bus device contains drivers and/or receivers only for the bus signals that it uses.
 
 - **b.** A flat cable containing 56 signal lines and corresponding ground lines.
 
@@ -69,35 +65,35 @@ A bus segment is that portion of a Unibus system between two terminators. A syst
 
 A bus repeater is a device used to interconnect two segments of a multi-segment Unibus system. A repeater receives the signals from one segment and retransmits them to the other segment. Its purpose is twofold:
 
-- **a.** It prevents signal levels from becoming degraded if too many devices are connected to a bus. (The original prints “converted”; “connected” is intended.)
+- **a.** It prevents signal levels from becoming degraded if too many devices are converted to a bus.
 
 - **b.** By receiving and then retransmitting all signals going between one segment and the next, the bus repeater ensures that the proper timing relationship between signals is maintained.
 
 ##### 1.2.1.5 Bus Master
 
-The bus master is the device or processor currently permitted to use the data section of the Unibus. Only one device may be master at a given time. Typically, a master uses the data section of the bus to transfer data between itself and another device which is called “slave.”
+The bus master is the device or processor currently permitted to use the data section of the Unibus. Only one device may be master at a given time. Typically, a master uses the data section of the bus to transfer data between itself and another device which is called "slave."
 
 ##### 1.2.1.6 Bus Slave
 
 The bus slave is the device that communicates with the bus master. Only one device may be slave at a given time.
 
-<!-- Source PDF page 12 -->
-
 Some devices may become both master and slave (at different times), while other devices may become only master or only slave.
 
 ##### 1.2.1.7 Bus Arbitrator
 
-The bus arbitrator is a logic circuit that compares priorities from devices requesting the use of the data section of the bus (see Paragraph 1.2.2.2) in order to determine which device is to be granted control of the data section of the bus next (i.e., becomes next bus master). The arbitrator may or may not be part of a processor. There must be one and only one arbitrator on a Unibus, although a system may have more than one Unibus, each with its own arbitrator.
+The bus arbitrator is a logic circuit that compares priorities from devices requesting the use of the data section of the bus (see Paragraph 1.2.2.2) in order to determine which device is to be granted control of the data section of the bus next (i.e., becomes next bus master).
+
+The arbitrator may or may not be part of a processor. There must be one and only one arbitrator on a Unibus, although a system may have more than one Unibus, each with its own arbitrator.
 
 ##### 1.2.1.8 Processor
 
-A processor is a bus device that includes the circuits that control the interpretation and execution of instructions. A processor does not include the Unibus, main memory, or peripheral devices. A processor may become master or slave,
+A processor is a bus device that includes the circuits that control the interpretation and execution of instructions. A processor does not include the Unibus, main memory, or peripheral devices. A processor may become master or slave.
 
 ##### 1.2.1.9 Interrupt Fielding Processor
 
-There may be more than one processor connected to a Unibus. Typically, however, there is only one “interrupt fielding processor." An interrupt fielding processor is a processor that has special connections to the arbitrator.
+There may be more than one processor connected to a Unibus. Typically, however, there is only one "interrupt fielding processor." An interrupt fielding processor is a processor that has special connections to the arbitrator.
 
-These special connections permit the interrupt fielding processor to service interrupt transactions on the Unibus. “interrupt" and “interrupt fielding" are discussed in Paragraphs 1.3.3, 2.4.7, 3.2.2.3, and 3.2.2.4.
+These special connections permit the interrupt fielding processor to service interrupt transactions on the Unibus. "interrupt" and "interrupt fielding" are discussed in Paragraphs 1.3.3, 2.4.7, 3.2.2.3, and 3.2.2.4.
 
 #### 1.2.2 Unibus Systems
 
@@ -107,41 +103,31 @@ Data is transmitted on the bus either as a 16-bit word or as an 8-bit byte. The 
 
 Since several devices may be ready to transfer data at the same time, and since only one of these devices obtains the use of the data section, the other requesting devices will have to wait before they are allowed to transfer their data. If the wait is too long, some devices may lose data. The wait is known as latency.
 
-<!-- Source PDF page 13 -->
-
 In this paragraph, concepts of signal lines, priority structure, address space and latency are discussed. These concepts are all taken into consideration when arranging devices on a Unibus. A discussion of the arrangement of devices ends this paragraph.
 
 ##### 1.2.2.1 Signal Lines
 
-Previous literature has defined Unibus signal lines as being either "bidirectional" or “unidirectional.” These terms are ambiguous and are not used in this specification. They are only mentioned in this paragraph because of the previous usage.
+Previous literature has defined Unibus signal lines as being either "bidirectional" or "unidirectional." These terms are ambiguous and are not used in this specification. They are only mentioned in this paragraph because of the previous usage.
 
-Unibus signal may be divided into two general categories with respect to the manner in which they are transmitted. The majority of signals use lines that are, in effect, wired-OR circuits to which the inputs to the bus receivers and the outputs of the bus drivers are connected. These lines are thus available along the length of the Unibus to any device which needs to receive or to assert/negate the signals transmitted on the lines. These lines were in the past called "bidirectional lines" because a signal asserted or negated at any point on the line may be received at any other point on the bus. It should be noted, however, that some of the signals transmitted on lines of this type are logically, if not electrically, “unidirectional." For example, requests for permission to use the data section of the bus are asserted on a line of this type by devices that need to become bus master, but are received only by the arbitrator. This request signal is, in effect, "unidirectional", although transmitted on a "bidirectional" line.
+Unibus signal may be divided into two general categories with respect to the manner in which they are transmitted. The majority of signals use lines that are, in effect, wired-OR circuits to which the inputs to the bus receivers and the outputs of the bus drivers are connected. These lines are thus available along the length of the Unibus to any device which needs to receive or to assert/negate the signals transmitted on the lines. These lines were in the past called "bidirectional lines" because a signal asserted or negated at any point on the line may be received at any other point on the bus. It should be noted, however, that some of the signals transmitted on lines of this type are logically, if not electrically, "unidirectional." For example, requests for permission to use the data section of the bus are asserted on a line of this type by devices that need to become bus master, but are received only by the arbitrator. This request signal is, in effect, "unidirectional", although transmitted on a "bidirectional" line.
 
-The sketch below shows these wired-OR lines schematically. The shared line connects the bus terminators and the drivers and receivers in the arbitrator and bus devices.
+The sketch below shows these wired-OR lines schematically:
 
 ![Wired-OR bus line with arbitrator, devices, terminators, drivers (D), and receivers (R)](figures/page-013.png)
 
-_D = driver; R = receiver._
-
-<!-- Source PDF page 14 -->
-
 Five Unibus signals use lines in which the signal is received only by the device that is closest on that line to the origin of the signal; this receiving device, in turn, either retransmits the signal to the next device on the line ("passes" the signal) or does not retransmit it ("blocks" the signal). The transmission process continues until either a device blocks the signal or the end of the line is reached. These lines have been called "unidirectional lines." They are used only by the arbitrator to grant bus access permission to devices requesting the use of the data section of the bus.
 
-The sketch below shows this type of line schematically. The arbitrator sends grant signals along separate lines through the devices; each device can pass or block a grant. Terminators and pull-up resistors are shown at the bus ends and device connections.
+The sketch below shows this type of line schematically:
 
 ![Unidirectional grant lines from the arbitrator through devices to the terminator; D = driver, R = receiver](figures/page-014.png)
-
-_D = driver; R = receiver._
 
 ##### 1.2.2.2 Priority Structure
 
 The use of the data section of the bus is granted to requesting devices according to a priority scheme. The priority of a device is a function of (1) the priority level assigned to the device, and (2) its position on the bus with respect to other devices of the same priority level.
 
-All devices, with the exception of the interrupt fielding processor, may be assigned to one (or more) of five priority levels. A signal line is dedicated to each of these levels. Each of these lines is driven by all bus devices assigned to the priority level. These five lines are referred to as “request lines" and are monitored by the arbitrator. A device that requires the use of the data section of the bus asserts a request on one of these lines. This request is received by the arbitrator. The arbitrator also monitors the priority level of the interrupt fielding processor. There are five relevant interrupt fielding processor levels.
+All devices, with the exception of the interrupt fielding processor, may be assigned to one (or more) of five priority levels. A signal line is dedicated to each of these levels. Each of these lines is driven by all bus devices assigned to the priority level. These five lines are referred to as "request lines" and are monitored by the arbitrator. A device that requires the use of the data section of the bus asserts a request on one of these lines. This request is received by the arbitrator. The arbitrator also monitors the priority level of the interrupt fielding processor. There are five relevant interrupt fielding processor levels.
 
 If no request at a level higher than the current interrupt fielding processor level is being received at the arbitrator, the data section of the bus is available to the processor. The arbitrator, however, may issue a grant at the level of the highest priority active request if the interrupt fielding processor is not at a higher priority level.
-
-<!-- Source PDF page 15 -->
 
 A grant is a signal that informs a requesting device that it may become bus master after the current master releases the data section of the bus.
 
@@ -159,9 +145,11 @@ A location is a word or byte of memory, or a register. An address is the name of
 
 Unibus devices may contain one or more locations: a simple device such as a line clock may contain only one, while a random-access or a read-only memory may contain thousands. A device may be able to store many words and yet have only three or four locations: an example of this is a secondary memory such as a disk or tape controller. A location may be used for storage of data or for control of a device. (See Paragraph 1.3.3.3.)
 
-NOTE The “I/O Page” is a PDP-11 system convention which defines the use of certain addresses on the Unibus.
+> **NOTE**
+>
+> The "I/O Page" is a PDP-11 system convention which defines the use of certain addresses on the Unibus.
 
-An address put on the address lines by a master is received by all bus devices that are capable of becoming slaves: one of these devices recognizes its address and becomes the slave; the slave <!-- Source PDF page 16 --> does not know which device is master, nor where the master is physically located on the bus. The master does not know the physical location of its slave.
+An address put on the address lines by a master is received by all bus devices that are capable of becoming slaves: one of these devices recognizes its address and becomes the slave; the slave does not know which device is master, nor where the master is physically located on the bus. The master does not know the physical location of its slave.
 
 ##### 1.2.2.4 Latency
 
@@ -181,31 +169,29 @@ The arrangement of devices on the Unibus is a function of the following four fac
 
 - **d.** The length of the bus must be kept as short as possible.
 
-NOTE The interrupt fielding processor is typically next to the arbitrator on the bus. For convenience, an arbitrator is usually built into a PDP-11 processor.
+> **NOTE**
+>
+> The interrupt fielding processor is typically next to the arbitrator on the bus. For convenience, an arbitrator is usually built into a PDP-11 processor.
 
 A typical Unibus configuration is shown in Figure 1-1. The bus is terminated at both ends by a terminator; the arbitrator and the interrupt-fielding processor are at one end of the bus. Various devices, such as memories, disk memories, input/output devices, are connected between the arbitrator and the other end of the bus.
 
-NOTE For Configuration Rules, see Paragraph 5.3.
+> **NOTE**
+>
+> For Configuration Rules, see Paragraph 5.3.
 
-<!-- Source PDF page 17 -->
-
-![Figure 1-1 — A typical Unibus configuration](figures/page-017.png)
+![Figure 1-1. A Typical Unibus Configuration](figures/page-017.png)
 
 ##### 1.2.2.6 Other Unibus Device Arrangements
 
 If a system exceeds the limitations set forth in this document, the bus must be divided into segments connected by a bus repeater. The limitations apply to the maximum number of devices on a segment (loading) and to the length of the bus cable. Figure 1-2 (A) shows such a configuration.
 
-Since a device that can only be a slave and is never a master (such as a memory) never requests nor receives grants, it may be physically located on either side of the arbitrator. Such an arrangement is shown in Figure 1-2 (B).
+Since a device that can only be a slave and is never a master (such as a memory) never requests nor receives grants, it may be physically located on either side of the arbitrator. Such an arrangement is shown on Figure 1-2 (B).
 
-<!-- Source PDF page 18 -->
-
-![Figure 1-2 — Other Unibus configurations, showing two bus segments and the alternative placement of slave-only devices](figures/page-018.png)
-
-### 1.3 Protocol
+### 1.3 PROTOCOL
 
 The Unibus interconnects the various devices that comprise a computing system to allow communication between these devices. Communication between devices is in the form of transactions: a transaction is a sequence of signals which complete a logical unit of activity on the Unibus. The Unibus protocol defines the procedures that are used during bus transactions.
 
-<!-- Source PDF page 19 -->
+![Figure 1-2. Other Unibus Configurations](figures/page-018.png)
 
 #### 1.3.1 Transaction Types
 
@@ -229,7 +215,7 @@ These grants are issued by the arbitrator only when the interrupt fielding proce
 
 Data transfer is defined as the transmission of data between a master and a slave. It can be accomplished between any two devices without program intervention or supervision.
 
-The device that has been granted the use of the bus waits for the Unibus to be released by the previous bus master. When a device becomes bus master, it asserts bus mastership and causes one or more words of data to be transferred between itself and a slave device, The particular slave and the direction of transfer are determined by the information issued by the bus master to the Unibus. When the transfer is finished, the master releases the bus, at which time a new device may assume mastership. A device in control of the bus can transfer data at the maximum rate allowed <!-- Source PDF page 20 --> by the combination of the master, the slave, and the bus. An interrupt is a special type of data transaction to which only the interrupt fielding processor can respond as slave (Paragraph 1.3.3.2).
+The device that has been granted the use of the bus waits for the Unibus to be released by the previous bus master. When a device becomes bus master, it asserts bus mastership and causes one or more words of data to be transferred between itself and a slave device. The particular slave and the direction of transfer are determined by the information issued by the bus master to the Unibus. When the transfer is finished, the master releases the bus, at which time a new device may assume mastership. A device in control of the bus can transfer data at the maximum rate allowed by the combination of the master, the slave, and the bus. An interrupt is a special type of data transaction to which only the interrupt fielding processor can respond as slave (Paragraph 1.3.3.2).
 
 ##### 1.3.3.2 Data Transfer Types
 
@@ -239,7 +225,7 @@ There are four types of data transfer transactions on the Unibus: data-in, data-
 
 "Data-out" is defined as the transfer of one word of data from a master to a slave; "data-out, byte" is defined as the transfer of one byte of data from a master to a slave.
 
-"Read/modify/write" is defined as a transaction in which data is transferred from a slave location to a master, modified by the master, and transferred back to the same slave location. A read/modify/write consists of a “data-in, pause" followed by a data-out or by a data-out, byte. The data-in, pause is identical to the data-in, but, it also informs the slave that a data-out transaction to the same location will follow the data-in. If the slave is a destructive readout device, e.g., a core memory, it will automatically restore the data after a data-in; after a data-in, pause, however, it might not restore the data but may wait for the modified data from the following data-out.
+"Read/modify/write" is defined as a transaction in which data is transferred from a slave location to a master, modified by the master, and transferred back to the same slave location. A read/modify/write consists of a "data-in, pause" followed by a data-out or by a data-out, byte. The data-in, pause is identical to the data-in, but, it also informs the slave that a data-out transaction to the same location will follow the data-in. If the slave is a destructive readout device, e.g., a core memory, it will automatically restore the data after a data-in; after a data-in, pause, however, it might not restore the data but may wait for the modified data from the following data-out.
 
 An "interrupt" transaction is defined as the transfer of one word, called the "interrupt vector," from the master to the interrupt fielding processor.
 
@@ -255,11 +241,9 @@ The initialization section of the Unibus continuously monitors the ac power inpu
 
 Devices may also be initialized under program control. Initialization stops all bus operations and puts all bus devices in a known, well-defined state.
 
-### 1.4 Electrical Characteristics
+### 1.4 ELECTRICAL CHARACTERISTICS
 
 Due to the high speed at which it operates, the Unibus is in effect a high frequency transmission line. This fact must be taken into consideration when choosing components and designing circuits, to ensure optimum performance.
-
-<!-- Source PDF page 21 -->
 
 ## Section 2: Signals
 
@@ -285,41 +269,11 @@ The signals that delimit data and priority arbitration operations are:
 
 #### 2.1.3 Unibus Signal Lines Use
 
-In all bus transactions, the assertion and the negation of a signal used in the interlocking dialog have different meanings. A device may assert a signal to indicate the initiation of a process and negate the same signal to note the completion of the same process.
+In all bus transactions, the assertion and the negation of a signal used in the interlocking dialog have different meanings. A device may assert a signal to indicate the initiation of a process and negate the same signal to note the completion of the same process. The important event is the transition from one state to the other. For example, in a data-in operation, the bus master asserts MSYN to request data from the slave, and negates MSYN to acknowledge receipt of the data from the slave. Therefore, the assertion and the negation of MSYN can be thought of as two different signals issued by a bus master on a single line.
 
-<!-- Source PDF page 22 -->
+![Table 2-1. Data Transfer, Priority Arbitration, and Initialization Signal Lines](figures/scan-table-2-1.png)
 
-**Table 2-1 — Data Transfer, Priority Arbitration, and Initialization Signal Lines**
-
-| Signal                   | Mnemonic            | Lines | Function                                    | Asserted level |
-| ------------------------ | ------------------- | ----: | ------------------------------------------- | -------------- |
-| **Data transfer**        |                     |       |                                             |                |
-| Address                  | A<17:00>            |    18 | Selects slave device and/or memory address  | Low            |
-| Data                     | D<15:00>            |    16 | Information transfer                        | Low            |
-| Control                  | C0, C1              |     2 | Type of data transfer                       | Low            |
-| Master Sync              | MSYN                |     1 | Timing control for data transfer            | Low            |
-| Slave Sync               | SSYN                |     1 | Timing control for data transfer            | Low            |
-| Parity                   | PA, PB              |     2 | Device parity error                         | Low            |
-| Interrupt                | INTR                |     1 | Interrupt                                   | Low            |
-| **Priority arbitration** |                     |       |                                             |                |
-| Bus Request              | BR4, BR5, BR6, BR7* |     4 | Requests use of bus (usually for interrupt) | Low            |
-| Bus Grant                | BG4, BG5, BG6, BG7* |     4 | Grants use of bus (usually for interrupt)   | High           |
-| Non-Processor Request    | NPR                 |     1 | Requests use of bus for data transfer       | Low            |
-| Non-Processor Grant      | NPG                 |     1 | Grants use of bus for data transfers        | High           |
-| Selection Acknowledge    | SACK                |     1 | Acknowledges grant                          | Low            |
-| Bus Busy                 | BBSY                |     1 | Indicates that the data section is in use   | Low            |
-| **Initialization**       |                     |       |                                             |                |
-| Initialize               | INIT                |     1 | System reset                                | Low            |
-| AC Low                   | AC LO               |     1 | Power monitoring                            | Low            |
-| DC Low                   | DC LO               |     1 | Power monitoring                            | Low            |
-
-*BRn and BGn indicate that one pair of BR and BG lines is used; the particular pair is not important to the discussion.
-
-<!-- Source PDF page 23 -->
-
-The important event is the transition from one state to the other. For example, in a data-in operation, the bus master asserts MSYN to request data from the slave, and negates MSYN to acknowledge receipt of the data from the slave. Therefore, the assertion and the negation of MSYN can be thought of as two different signals issued by a bus master on a single line.
-
-In this specification, the terms “the assertion of . . ." or "at the assertion of . . ." signify the transition of a signal from the negated state to the asserted state; the term "while ... is asserted" refers to the interval between the assertion and the negation of a signal. While asserted, a signal is in the logically true state.
+In this specification, the terms "the assertion of . . ." or "at the assertion of . . ." signify the transition of a signal from the negated state to the asserted state; the term "while ... is asserted" refers to the interval between the assertion and the negation of a signal. While asserted, a signal is in the logically true state.
 
 The terms "the negation of . . ." or "at the negation of ..." signify the transition from the asserted state to the negated state; the term "while . . . is negated" refers to the interval between the negation and the assertion of the signal. While negated, a signal is in the logically false state.
 
@@ -337,7 +291,7 @@ Bus transmission delay is defined as the length of time taken by a signal to tra
 
 ##### 2.2.2.1 Skew Definition
 
-When two separate signals are sent from one device to another device, starting at the same time, there can be a time difference in the receipt of these signals by the second device, even if similar circuitry and transmission medium are used. This time difference (or time uncertainty) is called skew. It is caused mainly by the variation in the transmission delay <!-- Source PDF page 24 --> time through the Unibus drivers and receivers, and by non-uniform loading by devices connected to the Unibus. (See the sketch below.)
+When two separate signals are sent from one device to another device, starting at the same time, there can be a time difference in the receipt of these signals by the second device, even if similar circuitry and transmission medium are used. This time difference (or time uncertainty) is called skew. It is caused mainly by the variation in the transmission delay time through the Unibus drivers and receivers, and by non-uniform loading by devices connected to the Unibus. (See the sketch below.)
 
 ![Sketch illustrating signal skew between sending and receiving devices](figures/page-024.png)
 
@@ -351,11 +305,7 @@ To deskew is to introduce a delay in a circuit to compensate for skew.
 
 A master is responsible for deskewing on all data transfer transactions with the exception of interrupt. The arbitrator and interrupt fielding processor are responsible for deskewing on interrupt transactions. The arbitrator is responsible for deskewing on priority arbitration transactions. The amount of logic elements required is thus minimized, since slave devices are generally more numerous than master devices in a system. Also, there are only one arbitrator and one interrupt fielding processor on a bus, but, typically, more than one master device.
 
-All delays specified in this document refer to assertions or negations at the input to Unibus drivers, and not to a signal that may be one or more gate delays away inside the device.
-
-<!-- Source PDF page 25 -->
-
-The following sketch shows an example of correct gating of data lines and a delayed control signal (MSYN); part B is an example of incorrect gating, because the inverters will not all have the same propagation delay, thus introducing additional skew.
+All delays specified in this document refer to assertions or negations at the input to Unibus drivers, and not to a signal that may be one or more gate delays away inside the device. Part A of the following sketch shows an example of correct gating of data lines and a delayed control signal (MSYN); part B is an example of incorrect gating, because the inverters will not all have the same propagation delay, thus introducing additional skew.
 
 ![Sketch of correct and incorrect gating of data lines and MSYN](figures/page-025.png)
 
@@ -377,11 +327,7 @@ A Type-2 line is a transmission medium in which a signal asserted or negated by 
 
 Type-2 lines are used by Unibus grant signals: NPG, BG7, BG6, BG5, and BG4.
 
-<!-- Source PDF page 26 -->
-
-![Figure 2-1 — Types of Unibus lines: Type 1, Type 2, and Type 3](figures/page-026.png)
-
-<!-- Source PDF page 27 -->
+![Figure 2-1. Types of Unibus Lines](figures/page-026.png)
 
 ##### 2.2.3.3 Type-3 Line
 
@@ -393,7 +339,7 @@ Twelve signal lines are used on the priority arbitration section of the Unibus. 
 
 Requests are transmitted on Type-1 lines and grants on Type-2 lines (Paragraph 2.2.3).
 
-A device that receives a grant and does not require the use of the data section of the bus retransmits the grant to the next device on the same grant line. This is known as “passing the grant." Both the assertion and the negation of a grant are passed by a device.
+A device that receives a grant and does not require the use of the data section of the bus retransmits the grant to the next device on the same grant line. This is known as "passing the grant." Both the assertion and the negation of a grant are passed by a device.
 
 A device that receives a grant and does require the use of the data section of the bus accepts the grant and does not retransmit it. This is called "blocking the grant."
 
@@ -402,8 +348,6 @@ If a grant is not acknowledged by any device, the grant is cancelled. This is do
 #### 2.3.1 Non-Processor Request (NPR)
 
 NPR is an asynchronous signal requesting the use of the data section of the bus, sent to the arbitrator by a device that requires the use of the bus to execute data transfers. These transfers are made without active participation by the processor. The signal is asynchronous and may be asserted at any time that the device is ready to start a data transfer. NPR has a higher priority than processor data transfers or any of the BR lines.
-
-<!-- Source PDF page 28 -->
 
 NPR is transmitted on a Type-1 line.
 
@@ -437,13 +381,13 @@ One or more data transfers (commonly called "NPR transfers") may be executed whi
 
 #### 2.3.3 Bus Request (BR4, BR5, BR6, BR7)
 
-A bus request is an asynchronous signal, requesting the use of the data section of the bus. This signal is sent to the arbitrator by a device that requires the use of the data section of the bus to execute data transfers (commonly called “NPR transfers"), or an interrupt transaction, or both of these. Only one interrupt transaction may be executed under a single grant. This interrupt transaction must be the last data transfer under that grant.
+A bus request is an asynchronous signal, requesting the use of the data section of the bus. This signal is sent to the arbitrator by a device that requires the use of the data section of the bus to execute data transfers (commonly called "NPR transfers"), or an interrupt transaction, or both of these. Only one interrupt transaction may be executed under a single grant. This interrupt transaction must be the last data transfer under that grant.
 
 BR4, BR5, BR6, and BR7 are transmitted on Type-1 lines.
 
 #### 2.3.4 Bus Grants (BG4, BG5, BG6, BG7)
 
-A bus grant is a signal generated by the arbitrator. The assertion and the negation of this signal are received and optionally retransmitted by each device capable of asserting the <!-- Source PDF page 29 --> corresponding BR line (BRn). The arbitrator guarantees that a BG is never asserted unless the processor that receives interrupts is ready to accept an interrupt vector at that level.
+A bus grant is a signal generated by the arbitrator. The assertion and the negation of this signal are received and optionally retransmitted by each device capable of asserting the corresponding BR line (BRn). The arbitrator guarantees that a BG is never asserted unless the processor that receives interrupts is ready to accept an interrupt vector at that level.
 
 BG4, BG5, BG6 and BG7 are transmitted on Type-2 lines.
 
@@ -487,8 +431,6 @@ BBSY is transmitted on a Type-1 line.
 
 While asserted, BBSY informs all devices on the Unibus that a master exists. During this time no device other than the master may assert BBSY, MSYN, INTR, or use the A or C lines. The D lines may be used only by the master or by the slave designated by the A lines. SSYN may be asserted only by the slave, although it may or may not be negated before the master negates BBSY. Other devices, however, may use other signal lines in the priority arbitration section of the bus.
 
-<!-- Source PDF page 30 -->
-
 ##### 2.3.6.2 BBSY Negation
 
 While negated, BBSY means that the data section of the bus is not being used (that there is no bus master).
@@ -499,9 +441,9 @@ Forty-one signal lines are used for data transfer. In a data transfer, one devic
 
 All signals in the data transfer section are transmitted on Type-1 lines.
 
-#### 2.4.1 Data Lines
+#### 2.4.1 Data Lines (D<15:00>)
 
-(D<15:00>) The 16 data lines contain the word of information that is being transferred between the master and the slave devices. A word consists of two eight-bit bytes. The low order byte contains bits 00 through 07 and the high order byte, bits 08 through 15.
+The 16 data lines contain the word of information that is being transferred between the master and the slave devices. A word consists of two eight-bit bytes. The low order byte contains bits 00 through 07 and the high order byte, bits 08 through 15.
 
 The bit format is as follows:
 
@@ -517,20 +459,11 @@ The address format is as follows:
 
 The 17 address lines A<17:01> specify a unique location. All locations contain a 16-bit word which is at an even address. A byte is half a word. In byte operations, bit A00 specifies which byte is being addressed. If a word is located at address X where X is even (i.e., its LSB=0), the low order byte is addressed at X, and the high order byte at X plus 1.
 
-<!-- Source PDF page 31 -->
-
 #### 2.4.3 Control Lines (C0, C1)
 
 These signals are sent by the master to the slave and indicate one of four possible data transfer operations. They are shown in the following chart.
 
-| Name           | Mnemonic | C1  | C0  | Function                                                                                                                          |
-| -------------- | -------- | --- | --- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Data In        | DATI     | 0   | 0   | One word of data from slave to master.                                                                                            |
-| Data In, Pause | DATIP    | 0   | 1   | Same as DATI, but inhibits restore cycle in destructive read-out devices. Must be followed by DATO or DATOB to the same location. |
-| Data Out       | DATO     | 1   | 0   | One word of data from master to slave.                                                                                            |
-| Data Out, Byte | DATOB    | 1   | 1   | One byte of data from master to slave. Data transferred on D<15:08> for A00=1; D<07:00> for A00=0.                                |
-
-_The notations "DATI/P" and "DATO/B" are equivalent to "DATI or DATIP" and "DATO or DATOB."_
+![Control lines, values and functions](figures/scan-control-lines.png)
 
 NOTE The direction of data transfer is always specified with reference to the master device; data-in is from slave to master, and data-out is from master to slave.
 
@@ -538,11 +471,9 @@ NOTE The direction of data transfer is always specified with reference to the ma
 
 The DATI and DATIP transactions request transfer of data from a slave to a master. Both transactions use the D lines to carry the data. These transactions are always a full word transfer, i.e., the slave places the data on D<15:00>. If the master wants only one byte, it must retrieve the data from the proper lines: low order byte from D<07:00>; high order byte from D<15:08>. For these byte operations, the master should not assert, and the slave should ignore, bit A00.
 
-##### 2.4.3.2 Datip Transaction
+##### 2.4.3.2 DATIP Transaction
 
 The DATIP operation is identical to the DATI, except that DATIP informs the slave device that the present transfer is the first part of a read/modify/write cycle.
-
-<!-- Source PDF page 32 -->
 
 A pause flag is set in a destructive readout device (e.g., core memory) which inhibits the restore cycle. The DATIP must be followed by a data-out cycle (DATO or DATOB) to the same word address.
 
@@ -564,13 +495,12 @@ PA and PB are generated by a slave and received by a master. They indicate parit
 
 The chart below is a summary of the possible combinations of the parity error indicators.
 
-<!-- Source PDF page 33 -->
-
-| PA  | PB  | Meaning                       |
-| --- | --- | ----------------------------- |
-| 0   | 0   | No error in a slave in DATI/P |
-| 0   | 1   | Error in slave in DATI/P      |
-| 1   | x   | Reserved                      |
+```text
+PA    PB
+0     0     no error in a slave in DATI/P
+0     1     error in slave in DATI/P
+1     X     reserved
+```
 
 The protocol for PA and PB is the same as that for D<15:00>.
 
@@ -588,7 +518,7 @@ The negation of MSYN indicates to the slave that the master considers the data t
 
 #### 2.4.6 Slave Sync (SSYN)
 
-SSYN is a signal issued by a slave and received by a master. SSYN has two functions, depending on whether it is being asserted or negated, It should be noted that, in an interrupt transaction, the interrupt fielding processor is the slave and the interrupting device is the master.
+SSYN is a signal issued by a slave and received by a master. SSYN has two functions, depending on whether it is being asserted or negated. It should be noted that, in an interrupt transaction, the interrupt fielding processor is the slave and the interrupting device is the master.
 
 ##### 2.4.6.1 SSYN Assertion
 
@@ -603,8 +533,6 @@ The negation of SSYN informs all bus devices that the slave has concluded the da
 #### 2.4.7 Interrupt Request (INTR)
 
 INTR is a signal asserted by an interrupting device after it becomes bus master to inform the interrupt fielding processor that an interrupt is to be performed and that the interrupt vector is present on the D lines.
-
-<!-- Source PDF page 34 -->
 
 INTR is negated upon receipt of the assertion of SSYN from the interrupt fielding processor at the end of the transaction. INTR may only be asserted by a device which obtained bus mastership under the authority of a BG4, BG5, BG6, or BG7.
 
@@ -650,8 +578,6 @@ The assertion of DC LO informs the bus devices that DC power to any bus drivers,
 
 The negation of DC LO informs the receiving devices that DC power to all bus drivers, receivers and terminators, whose failure would make the Unibus inoperable, is within specifications.
 
-<!-- Source PDF page 35 -->
-
 ## Section 3: Protocol
 
 ### 3.1 Definitions And Concepts
@@ -686,11 +612,7 @@ Three facts must be taken into account to understand the operation of the Unibus
 
 - **b.** In the same manner, a bus master controls the data section of the bus, i.e., no other device may control this section until the master releases it. BBSY, while asserted, prohibits any device with the exception of the master and the designated slave from using the data section of the bus.
 
-<!-- Source PDF page 36 -->
-
-![Figure 3-1 — Unibus block diagram showing arbitration and data transfer in parallel](figures/page-036.png)
-
-<!-- Source PDF page 37 -->
+![Figure 3-1. Unibus Block Diagram](figures/page-036.png)
 
 - **c.** Priority arbitration and data transfer may be executed simultaneously on the Unibus. This is shown in Figure 3-1. Device N requests the use of the data section of the bus. (A device may do this at any time.) No action will be taken on this request until such time as device N-1, the current bus master, releases the arbitrator. When this is done, if no requests of a priority level higher than that of device N are pending, device N is selected as next master. At this time, device N controls the arbitrator and device N-1 still controls the data section of the bus.
 
@@ -708,11 +630,7 @@ The use of the data section of the bus is granted to requesting devices in accor
 
 Five priority levels are available for assignment to all bus devices capable of becoming bus master, with the exception of the interrupt fielding processor. These levels are called: Level NPR, Level 7, Level 6, Level 5, and Level 4.
 
-<!-- Source PDF page 38 -->
-
-![Figure 3-2 — Priority structures block diagram](figures/page-038.png)
-
-<!-- Source PDF page 39 -->
+![Figure 3-2. Priority Structures Block Diagram](figures/page-038.png)
 
 NOTE The PDP-11/15 and PDP-11/20 processors have only two priority levels: NPR and BR. An option (KF11) allows these processors to use all four BR priority levels.
 
@@ -730,26 +648,24 @@ The arbitrator monitors the priority level of the interrupt fielding processor. 
 
 If no request at a level higher than the current interrupt fielding processor level is being received at the arbitrator, the data section of the bus is available to the processor; the arbitrator, however, may issue a grant at the level of the highest priority active request if the interrupt fielding processor is not at a higher priority level. A grant is a signal that informs a requesting device that it may become bus master after the current master releases the data section of the bus. An NPG (Non-Processor Grant) may be issued in response to an NPR, a BG7 (Bus Grant 7) in response to a BR7, a BG6, BG5 or BG4 in response to BR6, BR5 or BR4. The order of priorities is as follows:
 
-From highest to lowest priority:
-
-1. Level NPR
-2. Interrupt Fielding Processor Level 7
-3. Level 7
-4. Interrupt Fielding Processor Level 6
-5. Level 6
-6. Interrupt Fielding Processor Level 5
-7. Level 5
-8. Interrupt Fielding Processor Level 4
-9. Level 4
-10. Interrupt Fielding Processor Level <4
+```text
+Highest Priority:  Level NPR
+                   Interrupt Fielding Processor Level 7
+                   Level 7
+                   Interrupt Fielding Processor Level 6
+                   Level 6
+                   Interrupt Fielding Processor Level 5
+                   Level 5
+                   Interrupt Fielding Processor Level 4
+                   Level 4
+Lowest Priority:   Interrupt Fielding Processor Level <4
+```
 
 NOTES
 
 1. The interrupt fielding processor may, at certain times, prevent the granting of BG7 through BG4 (Paragraph 3.2.2.4).
 
 2. PDP-11/15 and PDP-11/20 data transfers occur prior to NPR or BR service.
-
-<!-- Source PDF page 40 -->
 
 ##### 3.1.3.5 Transmission Of Grants
 
@@ -771,9 +687,7 @@ The first of these factors is more important because no device may use the bus u
 
 Only after the grant has been issued by the arbitrator may a device obtain this grant. The requesting device electrically closest to the arbitrator on this grant line accepts, acknowledges and blocks the grant, thus preventing the other devices on this grant line from using this grant. Thus, electrical proximity to the arbitrator is the secondary factor in determining the priority of a device.
 
-<!-- Source PDF page 41 -->
-
-- **b.** The arbitrator does not know which devices are requesting grants, nor their physical position on the bus: the requests that it receives on the five request lines may be asserted by more than one device on each line at the same time,
+- **b.** The arbitrator does not know which devices are requesting grants, nor their physical position on the bus: the requests that it receives on the five request lines may be asserted by more than one device on each line at the same time.
 
 - **c.** The arbitrator does not know which of the devices at the level at which a grant is issued is using this grant, nor the physical position of this device on the bus.
 
@@ -806,15 +720,13 @@ Their physical position on the bus is as shown on the drawing, with device A clo
 
 It should be noted that device D has the highest priority at its NPR level, but is fourth at its Level 5. Also, device B is in the second physical position on the bus but has the lowest priority.
 
-<!-- Source PDF page 42 -->
-
-![Figure 3-3 — Example of priority arbitration](figures/page-042.png)
-
-#### 3.1.4 Note On Timing Diagrams
+#### 3.1.4 Note on Timing Diagrams
 
 Arrows on the timing diagrams show causal relationships between signals. A timing specification may be inserted into an arrow. For example, an arrow with the notation: "75 ns min." inserted into it, pointing from signal A to signal B signifies that signal B follows signal A, but not before a minimum delay of 75 nanoseconds has elapsed.
 
-LEGENDS: "asserted," "negated," and "either asserted or negated" are self-explanatory. "Defined" refers to the A, C and D lines received by a device after having been asserted in a valid <!-- Source PDF page 43 --> configuration by another device; the slanted lines at the beginning and/or end of the undefined periods represent skew time. "Undefined" and "irrelevant" are used only in Paragraph 5.4 [sic; see §3.4]. "Undefined" means that the line may be either asserted, negated, or be in some intermediate state because the DC power is coming up or going down. "Irrelevant" signifies that the state of the line is of no concern at the time.
+LEGENDS: "asserted," "negated," and "either asserted or negated" are self-explanatory. "Defined" refers to the A, C and D lines received by a device after having been asserted in a valid configuration by another device; the slanted lines at the beginning and/or end of the undefined periods represent skew time. "Undefined" and "irrelevant" are used only in Paragraph 5.4. "Undefined" means that the line may be either asserted, negated, or be in some intermediate state because the DC power is coming up or going down. "Irrelevant" signifies that the state of the line is of no concern at the time.
+
+![Figure 3-3. Example of Priority Arbitration](figures/page-042.png)
 
 All the timing diagrams that follow in this section show timing at more than one device. With the exception of Figure 3-13 (Typical Power Up/Down Sequence), these device timing diagrams should be considered independent of each other.
 
@@ -836,11 +748,7 @@ Device 1 ends its data transfer and relinquishes the bus by negating BBSY.
 
 As soon as device 2 has received the negation of BBSY, device 2 becomes bus master, asserts BBSY, and starts its data transfer cycle.
 
-<!-- Source PDF page 44 -->
-
-![Typical arbitration sequence (source PDF page 44)](figures/page-044.png)
-
-<!-- Source PDF page 45 -->
+![Figure 3-4. Typical Arbitration Sequence](figures/page-044.png)
 
 Requests are not honored by the arbitrator while a grant is asserted, nor while the assertion of SACK is seen at the arbitrator. The request from device 3 is an example of this.
 
@@ -868,11 +776,7 @@ The numbers of the steps in this paragraph correspond to the numbers on Figure 3
 
 2. After a propagation delay, the assertion of NPR is received by the arbitrator.
 
-<!-- Source PDF page 46 -->
-
-![Typical NPR arbitration sequence (source PDF page 46)](figures/page-046.png)
-
-<!-- Source PDF page 47 -->
+![Figure 3-5. Typical NPR Arbitration Sequence (See Paragraph 3.1.3)](figures/page-046.png)
 
 **3.** If the negation of SACK from the previous priority arbitration sequence has been received by the arbitrator for at least 75 nanoseconds, the arbitrator asserts NPG and the arbitration process is stopped.
 
@@ -882,7 +786,7 @@ NOTES
 
 The delay ensures that the negation of NPR or BR from the previous arbitration sequence has arrived at the arbitrator before arbitration is resumed. This prevents the issue of a grant in response to the request from the previous arbitration sequence in the case that the request is negated at the same time as SACK. (See Step 5.)
 
-In the case of a single word transfer, the master typically negates SACK immediately after asserting BBSY. The SACK delay ensures, in this case, that the assertion of BBSY is sensed before the negation of SACK. This prevents the interrupt fielding processor from asserting BBSY upon seeing the bus free,
+In the case of a single word transfer, the master typically negates SACK immediately after asserting BBSY. The SACK delay ensures, in this case, that the assertion of BBSY is sensed before the negation of SACK. This prevents the interrupt fielding processor from asserting BBSY upon seeing the bus free.
 
 2. No other grant (NPG or BG) may be issued by the arbitrator while an NPG is asserted.
 
@@ -891,8 +795,6 @@ In the case of a single word transfer, the master typically negates SACK immedia
 **5.** The requesting device then asserts SACK. In the case of a single word transfer, NPR must be negated by the requesting device after the assertion of SACK, but before SACK is negated. If another transfer is required after the current one, NPR may remain asserted.
 
 **6.** After a propagation delay, the assertion of SACK is received at the arbitrator.
-
-<!-- Source PDF page 48 -->
 
 NOTES
 
@@ -908,9 +810,7 @@ The arbitrator, upon receipt of the assertion of SACK, negates NPG. The negation
 
 **9.** After receiving the negation of BBSY the requesting device asserts BBSY. The requesting device becomes bus master at the time of its assertion of BBSY, and starts its data transfer cycle(s). (See Paragraph 3.3.)
 
-**10.** After it has asserted BBSY and at some time before it has finished transferring data, the bus master may negate SACK, if it has received the negation of BGn [sic].
-
-> Source note: Step 10 on PDF page 48 prints BGn in this NPR sequence; the interlock in Note 2 immediately below requires the negation of NPG.
+**10.** After it has asserted BBSY and at some time before it has finished transferring data, the bus master may negate SACK, if it has received the negation of BGn.
 
 NOTES
 
@@ -921,8 +821,6 @@ NOTES
 **11.** After a propagation delay, the arbitrator receives the negation of SACK.
 
 12. The arbitrator waits a minimum of 75 nanoseconds, then resumes arbitration. See Note 1, step 3.
-
-<!-- Source PDF page 49 -->
 
 13. At the end of its last data transfer cycle, the master waits at least 75 nanoseconds after negating MSYN, then removes any A, C, D, bits it has put on the bus. It then negates BBSY, thus releasing the bus. SACK must be negated before BBSY may be negated.
 
@@ -938,7 +836,7 @@ Upon receipt of the assertion of SSYN, the master removes the vector from the D 
 
 When the interrupt fielding processor receives the negation of INTR, it negates SSYN.
 
-Upon receipt of the assertion of INTR, the arbitrator ceases to issue BGs. It grants no BGs until authorized to do so by the interrupt fielding processor. NPGS, however, may be granted during this time,
+Upon receipt of the assertion of INTR, the arbitrator ceases to issue BGs. It grants no BGs until authorized to do so by the interrupt fielding processor. NPGs, however, may be granted during this time.
 
 ##### 3.2.2.4 Detailed Description: BR Interrupt Arbitration Sequence
 
@@ -950,15 +848,9 @@ The numbers of the steps in this paragraph correspond to the numbers on Figure 3
 
 3. If the negation of SACK from the previous priority arbitration sequence has been received by the arbitrator for at least 75 nanoseconds and if the interrupt fielding processor is ready to accept an interrupt vector at the level of the interrupting device, the arbitrator asserts BGn and the arbitration process is stopped.
 
-<!-- Source PDF page 50 -->
+![Figure 3-6. Typical Interrupt Cycle Diagram](figures/page-050.png)
 
-![Vector deskew timing diagram (source PDF page 50)](figures/page-050.png)
-
-<!-- Source PDF page 51 -->
-
-![Typical interrupt transaction (source PDF page 51)](figures/page-051.png)
-
-<!-- Source PDF page 52 -->
+![Figure 3-7. Typical Interrupt Transaction (Paragraph 3.1.4)](figures/page-051.png)
 
 NOTES
 
@@ -980,8 +872,6 @@ NOTES
 
 1. If the assertion of SACK is not received by the arbitrator during a specified time after its assertion of BGn (timeout delay), BGn is negated and arbitration resumes (Paragraph 3.1.3.6). The timeout delay is typically 5 to 10 microseconds.
 
-<!-- Source PDF page 53 -->
-
 2. Systems may avoid the timeout delay by having, at the end of the bus opposite to the arbitrator, a terminator that asserts SACK if it receives the assertion of BGn. The arbitrator, upon receipt of the assertion of SACK, negates BGn. The negation of BGn is propagated along the bus to the terminator, which negates SACK upon receipt of the negation of BGn. Steps 11 and 12 of Paragraph 3.2.2.2 (NPR Sequence) are then executed.
 
 **7.** The arbitrator then negates BGn.
@@ -992,7 +882,7 @@ NOTES
 
 **10.** The bus master, which must have been granted the use of the data section of the Unibus by a BG but not by an NPG, puts the interrupt vector on the D lines.
 
-**11.** After the master receives the negation of SSYN (which is typically already negated), it asserts INTR. After the master has asserted INTR and received the negation of BGn it negates SACK,
+**11.** After the master receives the negation of SSYN (which is typically already negated), it asserts INTR. After the master has asserted INTR and received the negation of BGn it negates SACK.
 
 NOTES
 
@@ -1003,8 +893,6 @@ The SACK delay compensates for skew between INTR and SACK at the arbitrator.
 2. The master must not negate SACK prior to its receipt of the negation of BGn. This provides the interlock that ensures that the arbitrator has received the assertion of SACK.
 
 3. The master may already have negated INTR or BBSY (Step 16 below) by the time it receives the negation of BGn (not typical, but possible). In this case, the master negates SACK when the negation of BGn is received.
-
-<!-- Source PDF page 54 -->
 
 12. After a propagation delay, the arbitrator and the interrupt fielding processor receive the assertion of INTR.
 
@@ -1024,15 +912,13 @@ NOTE The vector deskew compensates for the skew between INTR and the D lines at 
 
 19. After receiving the negation of SACK (Step 11 above), the arbitrator waits for 75 nanoseconds (SACK delay), then may resume issuing NPGs, but not BGs.
 
-NOTE Typically, the interrupt fielding processor reads a new program counter and status word from memory the locations designated by the interrupt vector. This is done immediately following the interrupt transaction. From this the interrupt fielding processor determines its new priority level. (See Paragraph 3.2.2.)
+NOTE Typically, the interrupt fielding processor reads a new program counter and status word from the memory locations designated by the interrupt vector. This is done immediately following the interrupt transaction. From this the interrupt fielding processor determines its new priority level. (See Paragraph 3.2.2.)
 
 20. The interrupt fielding processor informs the arbitrator that it may start issuing BGs.
 
 NOTES
 
 1. Data may be transferred by a device that has become bus master through a BRn-BGn sequence. In this case, the procedure is the same as that described for NPR in Paragraph 3.2.2.2.
-
-<!-- Source PDF page 55 -->
 
 2. A master may only execute one INTR transaction per BG.
 
@@ -1060,11 +946,7 @@ The master, after negating MSYN, deskews the A and C lines. This ensures that th
 
 If the master is not going to use the bus for another data transfer at this time, it negates BBSY. This releases the data section of the bus for possible use by another device. If there is to be another transfer (e.g., a DATO or DATOB after a DATIP), BBSY is held asserted by the current master.
 
-<!-- Source PDF page 56 -->
-
-![Data-in transaction timing diagram (source PDF page 56)](figures/page-056.png)
-
-<!-- Source PDF page 57 -->
+![Figure 3-8. Typical DATI and DATIP Cycle](figures/page-056.png)
 
 ##### 3.3.1.2 Detailed Description, DATI and DATIP
 
@@ -1090,13 +972,9 @@ NOTES
 
 1. If the assertion of SSYN is not received by the master during a specified time after its assertion of MSYN (timeout delay), Step 7 below may be executed, and Steps 8 and 9 must be executed by the master. An error bit may be set.
 
-<!-- Source PDF page 58 -->
+![Figure 3-9. Typical DATI Transaction](figures/page-058.png)
 
-![Data-in timing requirements (source PDF page 58)](figures/page-058.png)
-
-<!-- Source PDF page 59 -->
-
-2. The timeout delay is typically 10 to 20 microseconds in processors. The use of some devices (e.g., bus window (DA11), data link (DL16)) require much longer times, which can be up to several hundreds of microseconds. These devices are used in multi-processor or multi-bus systems.
+2. The timeout delay is typically 10 to 20 microseconds in processors. The use of some devices (e.g., bus window (DA11), data link (DL10)) require much longer times, which can be up to several hundreds of microseconds. These devices are used in multi-processor or multi-bus systems.
 
 **7.** After waiting for at least 75 nanoseconds after the receipt of the assertion of SSYN (data deskew), the master strobes in the data.
 
@@ -1119,8 +997,6 @@ NOTE SSYN must not be negated before the data is removed from the D lines. This 
 ##### 3.3.2.1 General Description: Data-Out Transaction
 
 Data-Out is defined as a data transfer from a master to a slave. DATO and DATOB are data-out operations, and are defined in Paragraph 2.4.3 of this specification. The timing and protocol for both of these operations is identical.
-
-<!-- Source PDF page 60 -->
 
 Figure 3-10 shows the interaction between master and slave for a typical DATO or DATOB. A bus master (BBSY asserted) places the slave address, the required control bits, and the data on the A, C and D Unibus lines. All devices decode A and C to see if they are selected as the slave for this transaction.
 
@@ -1148,15 +1024,9 @@ The step numbers in this paragraph correspond to the numbers on Figure 3-11.
 
 2. After a propagation delay, each device on the bus receives the address and control bits, and decodes them.
 
-<!-- Source PDF page 61 -->
+![Figure 3-10. Typical DATO or DATOB Cycle](figures/page-061.png)
 
-![Data-out transaction timing diagram (source PDF page 61)](figures/page-061.png)
-
-<!-- Source PDF page 62 -->
-
-![Data-out timing requirements (source PDF page 62)](figures/page-062.png)
-
-<!-- Source PDF page 63 -->
+![Figure 3-11. Typical DATO Transaction (See Paragraph 3.1.4)](figures/page-062.png)
 
 **3.** After putting the address, control, and data bits on the A, C and D lines, the master waits for at least 150 nanoseconds (front end deskew). This means that the master must not assert MSYN at the driver input until 150 nanoseconds have elapsed since the A, C, D, and enable lines have become valid at the A, C and D driver inputs. (See Note 1 to Step 5 below.)
 
@@ -1178,8 +1048,6 @@ NOTE The data must be strobed by the slave either at the same time as, or previo
 
 8. After a propagation delay, the master receives the assertion of SSYN.
 
-<!-- Source PDF page 64 -->
-
 NOTES
 
 1. If the assertion of SSYN is not received by the master during a specified time after its assertion of MSYN (timeout delay), the steps that follow are executed and an error bit may be set.
@@ -1194,13 +1062,11 @@ NOTE The tail-end deskew guarantees that the A lines will not change at any bus 
 
 **11.** After a propagation delay, the slave receives the negation of MSYN and then negates SSYN.
 
-#### 3.3.3 Read/Modify/Write, Datip-Dato/B
+#### 3.3.3 Read/Modify/Write, DATIP-DATO/B
 
 ##### 3.3.3.1 Description, Read/Modify/Write Transaction
 
 A read/modify/write transaction consists of a DATIP followed immediately by a DATO or DATOB. These transactions are defined in Paragraph 2.4.3, and the protocol relating to them in Paragraphs 3.3.1 and 3.3.2.
-
-<!-- Source PDF page 65 -->
 
 Figure 3-12 shows a typical DATIP-DATO/B transaction. The following rules must be followed:
 
@@ -1234,13 +1100,11 @@ INIT is caused by some console operations, the RESET instruction, and DC LO. Onl
 
 A processor must become bus master, then wait for 5 microseconds, before it may assert INIT. No bus cycles may be executed during these 5 microseconds. This delay ensures that all memory cycles in progress are properly completed before the assertion of INIT.
 
-<!-- Source PDF page 66 -->
+![Figure 3-12. Typical DATIP-DATO/B Transaction (See Paragraph 3.1.4)](figures/scan-fig-3-12.png)
 
-![DATIP-DATO/B transaction timing diagram (source PDF page 66)](figures/page-066.png)
+However, if a processor that wants to assert INIT cannot obtain the use of the data section of the bus after trying for 100 microseconds, it may then assert INIT without becoming bus master.
 
-<!-- Source PDF page 67 -->
-
-However, if a processor that wants to assert INIT cannot obtain the use of the data section of the bus after trying for 100 microseconds, it may then assert INIT without becoming bus master. Processors that obtain the use of the data section of the bus through a grant sequence must not negate SACK until after their assertion of INIT. This ensures that the arbitrator receives the assertion of INIT before the negation of SACK, and thus cannot start arbitration until it receives the negation of INIT.
+Processors that obtain the use of the data section of the bus through a grant sequence must not negate SACK until after their assertion of INIT. This ensures that the arbitrator receives the assertion of INIT before the negation of SACK, and thus cannot start arbitration until it receives the negation of INIT.
 
 Any processor, after negating INIT, must wait 75 nanoseconds before asserting any signal except AC LO, DC LO or INIT. This ensures that the negation of INIT reaches all bus devices before any signals asserted on the data section of the bus by the processor.
 
@@ -1261,8 +1125,6 @@ When a master/slave device receives the assertion of INIT:
 After receipt of the negation of INIT, a device must be programmable in its normal manner. If the device is not ready to receive commands at this time, the device may set a Busy bit until its internal initialization sequence is finished. The device may have an error condition set. Some of the device registers may contain new or old values. The content of these registers after receipt of the negation of INIT must be defined in the device specification; it is recommended that devices retain as much status information as possible in order to make error analysis easier.
 
 A device is not required to buffer commands received during its internal initialization sequence, provided it sets a bit indicating that it is not ready to accept commands (Busy bit).
-
-<!-- Source PDF page 68 -->
 
 #### 3.4.2 Power-Up And Power-Down Sequences
 
@@ -1288,15 +1150,9 @@ The term "DC power" is used in this Paragraph (3.4.2) to mean only that DC power
 
 7. The processor waits a minimum of 2 milliseconds, before testing AC LO again. These 2 milliseconds are used by the program for the power-up sequence.
 
-<!-- Source PDF page 69 -->
+![Figure 3-13. Typical Power-Up/Down Sequence (Paragraph 3.4.2)](figures/page-069.png)
 
-![Power-up and power-down sequence timing diagram (source PDF page 69)](figures/page-069.png)
-
-<!-- Source PDF page 70 -->
-
-![Power-up and power-down sequence timing diagram (source PDF page 70)](figures/page-070.png)
-
-<!-- Source PDF page 71 -->
+![Figure 3-14. Power-Up/Down Sequences Flow Chart](figures/page-070.png)
 
 ##### 3.4.2.2 Power-Down Sequence (Figure 3-13)
 
@@ -1318,11 +1174,7 @@ NOTES
 
 1. Since the power-up sequence starts at the negation of AC LO that follows (after a 70-millisecond delay) the negation of DC LO (Steps 3 through 7, Paragraph 3.4.2.1), and since AC LO is not tested during the 2 milliseconds allotted to the power-up sequence then if AC LO is reasserted before the end of the power-up sequence (2 milliseconds), the power-down sequence (2 to 3 milliseconds) must be performed immediately following the power-up sequence. This requires a minimum of 5 milliseconds of guaranteed DC power at the negation of AC LO. This also implies that 5 milliseconds of guaranteed DC power are available at any time while AC LO is negated.
 
-<!-- Source PDF page 72 -->
-
-2. A “BROWN OUT" condition occurs when AC LO is asserted, DC power is within specifications and DC LO is negated. The processor, in this case, waits for the negation of AC LO as explained in Step 6 above.
-
-<!-- Source PDF page 73 -->
+2. A "BROWN OUT" condition occurs when AC LO is asserted, DC power is within specifications and DC LO is negated. The processor, in this case, waits for the negation of AC LO as explained in Step 6 above.
 
 ## Section 4: Interface Design Guidelines
 
@@ -1344,9 +1196,7 @@ The following chips are not recommended for new Unibus interface designs: 314, 5
 
 Customers may purchase the 8641, 8881, and 8640 chips from Digital Equipment Corporation (option numbers 964, 957, and 956, respectively). These three chips are the only ones that DIGITAL approves for customer-designed Unibus interfaces at this time. Figures 4-1 through 4-3 illustrate the circuit schematics of these approved Unibus interface chips.
 
-<!-- Source PDF page 74 -->
-
-![Figure 4-1 — 8640 bus receiver](figures/page-074.png)
+![Figure 4-1. 8640 Bus Receiver](figures/page-074.png)
 
 ### 4.3 Unit Load
 
@@ -1366,9 +1216,7 @@ If a choice between (4) and (5) exists, (4) is preferred.
 
 The purpose of this newly defined unit load is to minimize capacitive loading on the Unibus. Too much capacitive loading concentrated at one point causes excessive reflections which, in turn, cause system failures.
 
-<!-- Source PDF page 75 -->
-
-![Figure 4-2 — 8641 bus transceiver](figures/page-075.png)
+![Figure 4-2. 8641 Bus Transceiver](figures/page-075.png)
 
 The traditional method of wire-ORing the interrupt vector and data lines onto the Unibus is no longer acceptable, since it violates the above definition. The examples in Paragraphs 4.8.3 and 4.8.4 show how to accomplish multiplexing before the Unibus without introducing skew.
 
@@ -1378,9 +1226,7 @@ It is important to keep the interface chips as close to the module fingers as po
 
 If there is a choice between placing either a driver or a receiver closer to the module fingers, the driver should be chosen. This provides the driver with a shorter ground return path.
 
-<!-- Source PDF page 76 -->
-
-![Figure 4-3 — 8881 bus driver](figures/page-076.png)
+![Figure 4-3. 8881 Bus Driver](figures/page-076.png)
 
 ### 4.5 Backplanes
 
@@ -1388,24 +1234,20 @@ Backplanes for non-SPC (small peripheral controller) modules should have the Uni
 
 Backplanes for SPC modules should not have stubs on BUS SSYN L, BUS BBSY L, and BUS MSYN L. To prevent stubs, wires have to be routed so that Unibus signals travel through rather than by signal interfaces. This concept is illustrated in Figure 4-5, design of critical signal runs in backplanes which accommodate SPC's. The BUS SACK L must also be routed in this manner so that its run length is the same as that of BUS BBSY L. This prevents skew buildup between BUS SACK L and BUS BBSY L signals. Similarly, BUS MSYN L should be routed in this manner along with BUS A<00:17>L and BUS C0/C1 L, again to prevent skew buildup.
 
-<!-- Source PDF page 77 -->
+![Figure 4-4. Backplane Designs Unsuited for SPCs](figures/page-077.png)
 
-![Figure 4-4 — Backplane designs unsuited for SPCs](figures/page-077.png)
-
-![Figure 4-5 — Critical signal runs in backplanes for SPCs](figures/fig-4-5-critical-signal-runs.png)
-
-<!-- Source PDF page 78 -->
+![Figure 4-5. Critical Signal Runs in Backplanes for SPCs](figures/fig-4-5-critical-signal-runs.png)
 
 Excessive backplane crosstalk onto the Unibus signals may cause system failures. For this reason, it is recommended that the following Unibus signals use 120-ohm twisted pair (part number 91-07773) for any backplane wire which exceeds four inches in length:
 
-| Signal     | Signal       |
-| ---------- | ------------ |
-| BUS INIT L | BUS BR<4:7>L |
-| BUS INTR L | BUS BG<4:7>H |
-| BUS BBSY L | BUS SSYN L   |
-| BUS SACK L | BUS MSYN L   |
-| BUS NPR L  | BUS AC LO L  |
-| BUS NPG H  | BUS DC LO L  |
+```text
+BUS INIT L       BUS BR<4:7>L
+BUS INTR L       BUS BG<4:7>H
+BUS BBSY L       BUS SSYN L
+BUS SACK L       BUS MSYN L
+BUS NPR L        BUS AC LO L
+BUS NPG H        BUS DC LO L
+```
 
 PC etch or number thirty wirewrap may be used for other wire runs. Twisted pairs other than the type mentioned above should not be used to route Unibus signals, because their impedance differences may contribute significantly to reflections.
 
@@ -1425,8 +1267,6 @@ The PC etch on backplanes should have one side devoted to a ground plane. Backpl
 
 It is very important to adhere rigidly to the timing restrictions given in this specification, particularly with respect to skew considerations.
 
-<!-- Source PDF page 79 -->
-
 Table 4-1, Unibus events requiring deskew, lists Unibus events where excessive skew can cause a failure. The events listed in the table are a summary of those critical situations when a transmitted signal is timing-dependent on another transmitted signal of the same device. The purpose of listing these events is to provide designers a convenient checklist for verifying the interface timings. If a design involves any of these events, be sure that the relevant portions of this specification are understood and that the worst-case propagation delays in the circuit do not violate the specification. For example, insure that the interrupt vector gets placed at the driver inputs at the same time as, or before, the BUS INTR signal. Skew is defined in Paragraph 2.2.2 of this specification.
 
 A good design philosophy is to keep the Unibus "clean." For example, it is preferable to prevent unasserted data line drivers from "glitching" the Unibus before the assertion of SSYN in a DATI transaction. Even though the spike does not violate the Unibus specification, reflections from it may cause a failure on a heavily loaded Unibus. In general, try to prevent placing any signal on the Unibus that is not needed for the transaction in progress.
@@ -1441,122 +1281,45 @@ A master device must obtain the bus through the arbitration process and execute 
 
 The design of devices which are capable of becoming bus master is described in this section. Paragraph 4.8.2 discusses the operation of an example implementation of the Unibus priority transfer logic. Paragraph 4.8.3 describes a suggested implementation of a Unibus interface for a device which interrupts at one priority level, while Paragraph 4.8.4 discusses a similar interface for a device which has two independent interrupt vectors. The design of the Unibus interface for an NPR device is discussed in Paragraph 4.8.5 and a typical implementation is shown.
 
-The examples in this section are typical of existing Unibus interface designs; they are presented here so that the implementation of the protocol described in this specification may be understood. They are not “model" or “ideal" designs; they do not “stretch” the protocol to its limits. They do, however, conform to the requirements of this specification.
+The examples in this section are typical of existing Unibus interface designs; they are presented here so that the implementation of the protocol described in this specification may be understood. They are not "model" or "ideal" designs; they do not "stretch" the protocol to its limits. They do, however, conform to the requirements of this specification.
 
-<!-- Source PDF page 80 -->
+![Table 4-1. Unibus Events Requiring Deskew](figures/scan-table-4-1-a.png)
 
-**Table 4-1 — Unibus Events Requiring Deskew**
+![Table 4-1. Unibus Events Requiring Deskew (Cont.)](figures/scan-table-4-1-b.png)
 
-**NPR arbitration sequence (§3.2.2.2)**
+![Table 4-1. Unibus Events Requiring Deskew (Cont.)](figures/scan-table-4-1-c.png)
 
-| Event too soon | Event too late | Transmitting device | Receiving device(s)          | Device that must deskew      | Deskew name |
-| -------------- | -------------- | ------------------- | ---------------------------- | ---------------------------- | ----------- |
-| NPR negation   | SACK assertion | Master              | Arbitrator                   | Arbitrator                   | —           |
-| BBSY assertion | SACK assertion | Master              | Arbitrator                   | Arbitrator                   | —           |
-| SACK negation  | NPR negation   | Master              | Arbitrator                   | Arbitrator                   | —           |
-| SACK negation  | BBSY assertion | Master              | Interrupt fielding processor | Interrupt fielding processor | —           |
-| BBSY negation  | SACK negation  | Master              | Arbitrator                   | Arbitrator                   | —           |
-
-**Interrupt transaction** (the scan references §3.2.2.5; see §3.2.2.4).
-
-> Source note: Table 4-1 prints D<02:08> for the interrupt vector lines. This is retained below; the circuit description in §4.8.3 instead specifies D<02:09>.
-
-| Event too soon | Event too late  | Transmitting device | Receiving device(s)          | Device that must deskew      | Deskew name   |
-| -------------- | --------------- | ------------------- | ---------------------------- | ---------------------------- | ------------- |
-| SACK negation  | INTR assertion  | Requesting device   | Interrupt fielding processor | Interrupt fielding processor | —             |
-| INTR assertion | D<02:08> gating | Requesting device   | Slave (CPU)                  | Slave (CPU)                  | Vector deskew |
-
-<!-- Source PDF page 81 -->
-
-**Table 4-1 — Unibus Events Requiring Deskew (continued)**
-
-**Interrupt transaction (continued)**
-
-| Event too soon  | Event too late     | Transmitting device | Receiving device(s)                                                        | Device that must deskew | Deskew name |
-| --------------- | ------------------ | ------------------- | -------------------------------------------------------------------------- | ----------------------- | ----------- |
-| BBSY negation   | D<02:08> releasing | Requesting device   | Next master (for BBSY) and next device (master or slave) receiving D lines | Next master             | —           |
-| BBSY negation   | INTR negation      | Requesting device   | Next master (for BBSY) and CPU receiving INTR                              | CPU                     | —           |
-| INTR negation   | D<02:08> releasing | Requesting device   | CPU                                                                        | CPU                     | —           |
-| D<02:08> gating | BBSY assertion     | Requesting device   | CPU                                                                        | CPU                     | —           |
-
-**DATI/DATIP transaction (§3.3.1.2)**
-
-| Event too soon | Event too late | Transmitting device | Receiving device(s) | Device that must deskew | Deskew name      |
-| -------------- | -------------- | ------------------- | ------------------- | ----------------------- | ---------------- |
-| MSYN assertion | A and C gating | Master              | Slave               | Master                  | Front-end deskew |
-| SSYN assertion | D gating       | Slave               | Master              | Master                  | Data deskew      |
-
-<!-- Source PDF page 82 -->
-
-**Table 4-1 — Unibus Events Requiring Deskew (continued)**
-
-**DATI/DATIP transaction (continued)**
-
-| Event too soon            | Event too late    | Transmitting device | Receiving device(s)                                                                     | Device that must deskew  | Deskew name     |
-| ------------------------- | ----------------- | ------------------- | --------------------------------------------------------------------------------------- | ------------------------ | --------------- |
-| SSYN negation             | D releasing       | Slave               | Master of next bus cycle (for SSYN) and next device (master or slave) receiving D lines | Master of next bus cycle | SSYN deskew     |
-| A and C releasing         | MSYN negation     | Master              | Slave                                                                                   | Master                   | Tail-end deskew |
-| BBSY negation (DATI only) | A and C releasing | Master              | Next master (for BBSY) and next slave (for A and C)                                     | Next master              | —               |
-| A and C gating            | BBSY assertion    | Master              | Slave                                                                                   | Master                   | —               |
-
-**DATO/B transaction (§3.3.2.2)**
-
-| Event too soon    | Event too late | Transmitting device | Receiving device(s) | Device that must deskew | Deskew name      |
-| ----------------- | -------------- | ------------------- | ------------------- | ----------------------- | ---------------- |
-| MSYN assertion    | A and C gating | Master              | Slave               | Master                  | Front-end deskew |
-| MSYN assertion    | D gating       | Master              | Slave               | Master                  | —                |
-| A and C releasing | MSYN negation  | Master              | Slave               | Master                  | Tail-end deskew  |
-
-<!-- Source PDF page 83 -->
-
-**Table 4-1 — Unibus Events Requiring Deskew (continued)**
-
-**DATO/B transaction (continued)**
-
-| Event too soon    | Event too late    | Transmitting device | Receiving device(s)                                 | Device that must deskew            | Deskew name |
-| ----------------- | ----------------- | ------------------- | --------------------------------------------------- | ---------------------------------- | ----------- |
-| BBSY negation     | A and C releasing | Master              | Next master (for BBSY) and next slave (for A and C) | Next master                        | —           |
-| A and C gating    | BBSY assertion    | Master              | Slave                                               | Master                             | —           |
-| A and C releasing | D releasing       | Master              | Next slave                                          | This master, during next bus cycle | —           |
-| BBSY negation     | D releasing       | Master              | Next master (for BBSY) and next slave (for D)       | Next master                        | —           |
-
-**Initialization (§3.4.1.1)**
-
-| Event too soon                                           | Event too late | Transmitting device | Receiving device(s) | Device that must deskew | Deskew name |
-| -------------------------------------------------------- | -------------- | ------------------- | ------------------- | ----------------------- | ----------- |
-| Assertion of any signal other than AC LO, DC LO, or INIT | INIT negation  | CPU                 | All Unibus devices  | CPU                     | —           |
-
-<!-- Source PDF page 84 -->
+![Table 4-1. Unibus Events Requiring Deskew (Cont.)](figures/scan-table-4-1-d.png)
 
 #### 4.8.2 Unibus Control Logic Example
 
 The functional logic diagram is given in Figure 4-6; it should be referred to in reading the description of circuit operation which follows. The reason for this diagram is to give an example of the logical sequence of events and is not intended to be implemented.
 
-![Figure 4-6 — Example of Unibus control logic](figures/page-084.png)
+![Figure 4-6. Example of Unibus Control Logic](figures/page-084.png)
 
 In the circuit description below, the following connections are assumed:
 
-The following signals are connected to their respective Unibus signal lines:
+The signals
 
-- BUS NPR L
-- BUS SACK L
-- BUS REQUEST L
-- BUS BBSY L
-- BUS GRANT IN H
-- BUS SSYN L
-- BUS GRANT OUT H
+```text
+BUS NPR L           BUS SACK L
+BUS REQUEST L       BUS BBSY L
+BUS GRANT IN H      BUS SSYN L
+BUS GRANT OUT H
+```
 
-<!-- Source PDF page 85 -->
+are connected to their respective Unibus signal lines.
 
-The following signals are connected as described below:
+The signals
 
-- STEAL GRANT L
-- INIT H
-- REQUEST L
-- SACK H
-- CLR SACK ENB L
-- MASTER L
-- MASTER CLR H
+```text
+STEAL GRANT L       INIT H
+REQUEST L           SACK H
+CLR SACK ENB L      MASTER L
+MASTER CLR H
+```
+
+are connected as described below.
 
 REQUEST L, generated by the master device, is a signal which is asserted to initiate a priority transfer sequence. The latch which it is "ANDed" with is used to insure that only one priority transfer sequence is initiated for each assertion of REQUEST L. (Once the latch is set, REQUEST L must be negated and asserted again before another cycle may begin, provided that MASTER CLR H is not grounded.) If the device is not asserting BUS BBSY L (if it is not already the bus master), the D input to the TAKE GRANT flop will be asserted and one input to the BUS REQUEST L driver will be enabled.
 
@@ -1566,8 +1329,6 @@ NOTE Paragraphs 3.2.2.2 and 3.2.2.4 specify that BUS SACK L shall be asserted at
 
 BUS BBSY is an input to the grant section circuit so that the state of BUS BBSY L determines whether or not the received BUS GRANT IN H will be passed or blocked; when an assertion of BUS GRANT IN H is received, while this device is asserting BUS BBSY L, it will be passed to another device of the same priority level as an assertion of BUS GRANT OUT H. Conversely, if the device is not asserting BUS BBSY L when an assertion of BUS GRANT IN H is received, it will be blocked from passing to another device; it intends to become the next bus master.
 
-<!-- Source PDF page 86 -->
-
 The TAKE GRANT and STEAL GRANT flops are clocked by the assertion of the BUS GRANT IN H. If the device is asserting BUS REQUEST L, the next assertion of BUS GRANT IN H will cause the TAKE GRANT flop to become set, or if STEAL GRANT L is asserted and some device is asserting BUS NPR L (while BBSY flop is reset), the STEAL GRANT flop will be set. Either flop being set disables an input to the BUS GRANT OUT driver, preventing the grant from being passed and enables the D input to the SACK flop. If the TAKE GRANT and SACK flops are set, one input to the clock of BBSY flop will be asserted.
 
 If the device is not requesting the bus, REQUEST L from the previous grant has not been negated and reasserted, or if the device is already asserting BUS BBSY L, then the TAKE GRANT flop will be cleared by the next assertion of BUS GRANT IN H. If the STEAL GRANT flop is also cleared by the assertion of BUS GRANT IN H, then the grant will be passed as an assertion of BUS GRANT OUT H. The delay D1 at the input to the BUS GRANT OUT driver insures that the TAKE GRANT and STEAL GRANT flops have had time to settle before any grants are passed to the next device of the system.
@@ -1576,7 +1337,7 @@ The assertion of the BUS GRANT IN H is also used to clock the SACK flop. Delay D
 
 The SACK flop may be reset by asserting CLR SACK ENB L at the same time as BUS BBSY L is asserted and BUS GRANT IN H is negated. Delay D3 at the output of the BUS BBSY L and CLR SACK ENB L gate insures that the BUS INTR (external signal) which is driven by MASTER L signal is asserted before SACK flop is cleared. If SACK flop was set because the STEAL GRANT flop was set, the SACK flop may be reset as soon as BUS GRANT IN H is negated. While CLR SACK ENB L is negated, SACK flop will remain set. This keeps the arbitrator disabled and allows the device to assert BUS BBSY L and to perform data and/or interrupt transfers at will. The CLR SACK ENB L is typically grounded (asserted).
 
-The BBSY flop will be set when the clock input conditions are satisfied; that is, TAKE GRANT and SACK flops are set and BUS GRANT IN H, BUS SSYN L and BUS BBSY L (not necessarily in this order) are all negated. BUS BBSY L is asserted when BBSY flop is set. The BUS BBSY L driver input is used to enable MASTER output, <!-- Source PDF page 87 --> to disable D inputs to TAKE GRANT and STEAL GRANT flops, and to allow the SACK flop to be cleared. MASTER L is a signal which may be used by the master device to initiate a data transfer or an interrupt sequence. The MASTER L signal is asserted when BUS BBSY L has been asserted and is negated before the negation of BUS BBSY L. Once BUS BBSY L has been asserted, the device has gained control of the Unibus and the data transfer or interrupt sequence may proceed. The MASTER L signal is available to drive external gatings; for example, it may be used to enable the appropriate data lines and BUS INTR in an interrupt sequence. When the requesting device has completed its transfer, it asserts MASTER CLR H. When both BUS SSYN L and MASTER CLR H are asserted (signifying that the transfer is completed), BBSY flop is reset and the latch on REQUEST L signal is returned to the state which disables the REQUEST L input to the chip. The MASTER L signal is negated as soon as BBSY flop is reset. Delay line D4, connected to Q output of the BBSY flop, insures that the negation of BUS BBSY L is delayed from the negation of MASTER L, which is used to drive BUS INTR. This delay is guaranteed to be at least 80 nanoseconds.
+The BBSY flop will be set when the clock input conditions are satisfied; that is, TAKE GRANT and SACK flops are set and BUS GRANT IN H, BUS SSYN L and BUS BBSY L (not necessarily in this order) are all negated. BUS BBSY L is asserted when BBSY flop is set. The BUS BBSY L driver input is used to enable MASTER output, to disable D inputs to TAKE GRANT and STEAL GRANT flops, and to allow the SACK flop to be cleared. MASTER L is a signal which may be used by the master device to initiate a data transfer or an interrupt sequence. The MASTER L signal is asserted when BUS BBSY L has been asserted and is negated before the negation of BUS BBSY L. Once BUS BBSY L has been asserted, the device has gained control of the Unibus and the data transfer or interrupt sequence may proceed. The MASTER L signal is available to drive external gatings; for example, it may be used to enable the appropriate data lines and BUS INTR in an interrupt sequence. When the requesting device has completed its transfer, it asserts MASTER CLR H. When both BUS SSYN L and MASTER CLR H are asserted (signifying that the transfer is completed), BBSY flop is reset and the latch on REQUEST L signal is returned to the state which disables the REQUEST L input to the chip. The MASTER L signal is negated as soon as BBSY flop is reset. Delay line D4, connected to Q output of the BBSY flop, insures that the negation of BUS BBSY L is delayed from the negation of MASTER L, which is used to drive BUS INTR. This delay is guaranteed to be at least 80 nanoseconds.
 
 An assertion of INIT H signal will clear BBSY flop and SACK flop (provided that BUS GRANT IN H is negated).
 
@@ -1586,17 +1347,13 @@ The NPR device may then use the data section of the bus before the BR device whi
 
 #### 4.8.3 BR Device (One Vector)
 
-The circuit schematic shown in Figure 4-7 shows a Unibus interface for a device with one interrupt vector. This interface utilizes the Unibus control logic example (Figure 4-6; the original incorrectly says 4-5) described in Paragraph 4.8.2 and demonstrates how this can be used in a typical application. The circuit shows how the interrupt vector should be multiplexed with the device's data lines by multiplexing before the Unibus drivers, the total Unibus loading of the device can be significantly reduced. (Refer to Paragraph 4.3) Also shown are gating features. This insures that the device operates within the timing constraints specified in Paragraph 3.2.2.4 of this specification.
+The circuit schematic shown in Figure 4-7 shows a Unibus interface for a device with one interrupt vector. This interface utilizes the Unibus control logic example (Figure 4-5) described in Paragraph 4.8.2 and demonstrates how this can be used in a typical application. The circuit shows how the interrupt vector should be multiplexed with the device's data lines by multiplexing before the Unibus drivers, the total Unibus loading of the device can be significantly reduced. (Refer to Paragraph 4.3) Also shown are gating features. This insures that the device operates within the timing constraints specified in Paragraph 3.2.2.4 of this specification.
 
-<!-- Source PDF page 88 -->
-
-![BR device, one-vector circuit schematic (source PDF page 88)](figures/page-088.png)
-
-<!-- Source PDF page 89 -->
+![Figure 4-7. BR Device (One Vector) Circuit Schematic](figures/page-088.png)
 
 In this circuit, a bus request is initiated by the device whenever an interrupt is necessary. When the INT ENB H signal is asserted (INT ENB is normally a bit in the control and status register of the device) and INT H becomes enabled, the REQUEST L input of the circuit in Figure 4-6 is asserted, initiating a priority transfer sequence on the Unibus.
 
-Some time later, when the device has been granted bus mastership (see Paragraph 4.8.2), the MASTER L signal is asserted. The interrupt sequence can now begin.
+Some times later, when the device has been granted bus mastership (see Paragraph 4.8.2), the MASTER L signal is asserted. The interrupt sequence can now begin.
 
 The device is not engaged in a data transfer as a slave, therefore, both REG SELECT L and IN L signals are negated and the Unibus transceivers associated with data lines (D<00:01> and D<10:15>) are disabled.
 
@@ -1612,11 +1369,7 @@ Note that the CLR SACK ENB L and STEAL GRANT L signals have been grounded (asser
 
 The circuit shown in Figure 4-8 shows a Unibus interface for a device which has two interrupt vectors. This circuit which utilizes two copies of the Unibus control logic example illustrates another typical BR application.
 
-<!-- Source PDF page 90 -->
-
-![BR device, two-vector circuit schematic (source PDF page 90)](figures/page-090.png)
-
-<!-- Source PDF page 91 -->
+![Figure 4-8. BR Device (Two Vectors)](figures/page-090.png)
 
 A typical application of this circuit might be a teletype controller where separate "send" and "receive" vectors would be useful. By using two complete circuits, an interrupt request for either vector may be initiated regardless of whether or not an interrupt sequence is in progress for the other vector.
 
@@ -1634,19 +1387,17 @@ It is possible to have a dual BR application with two different BR levels used. 
 
 The circuit shown in Figure 4-9 illustrates a typical NPR Unibus interface using the Unibus control logic example from Paragraph 4.8.2.
 
-When an NPR transfer is required, NPR REQ L is asserted by the requesting device. The arbitrator recognizes this request and issues an NPG. The requesting device blocks the grant from passing through to the next device and acknowledges with a BUS SACK. The BUS SACK will allow the arbitrator to negate the grant and to stop <!-- Source PDF page 92 --> arbitrating.
+When an NPR transfer is required, NPR REQ L is asserted by the requesting device. The arbitrator recognizes this request and issues an NPG. The requesting device blocks the grant from passing through to the next device and acknowledges with a BUS SACK. The BUS SACK will allow the arbitrator to negate the grant and to stop arbitrating.
 
-![NPR device circuit schematic (source PDF page 92)](figures/page-092.png)
+![Figure 4-9. NPR Device Circuit Schematic](figures/page-092.png)
 
 The requesting device after receiving the negations of BUS BBSY L, BUS SSYN L and BUS NPG H, asserts BUS BBSY L and becomes bus master and then starts data transfer(s).
 
 The NPR MASTER L signal which is asserted at the same time as BUS BBSY L is asserted is used to drive external circuitry (not shown). For example, the NPR MASTER L can be used to enable the data and address lines and to generate MSYN L signal and other control logic. When the data transfer is completed, the bus mastership is terminated by negating the NPR REQ L signal. The NPR REQ L must be asserted again if another transfer is required. Note that NPR REQ L is directly connected to INIT H signal. Once the request is asserted, it must remain asserted until the data transfer is completed, otherwise bus mastership will be prematurely terminated.
 
-Note that the STEAL GRANT circuit is disabled by connecting BUS NPR L and STEAL GRANT L to a logic "1" level. The Unibus control logic example has capability of preventing the negation of BUS SACK for devices that do more than one data cycle each time it becomes master. This is done by holding CLR SACK ENB L to logic "1" <!-- Source PDF page 93 --> until the beginning of the last bus cycle; for example, if 100 NPR data cycles are to be transferred, this signal should be held to a logic "1" until the completion of 99 data cycles. This insures that the bus will be given to the highest priority requesting device on the bus at the end of the 100 transfers. The CLR SACK ENB signal is grounded (asserted) so only one bus cycle is done for each request as shown in Figure 4-9.
+Note that the STEAL GRANT circuit is disabled by connecting BUS NPR L and STEAL GRANT L to a logic "1" level. The Unibus control logic example has capability of preventing the negation of BUS SACK for devices that do more than one data cycle each time it becomes master. This is done by holding CLR SACK ENB signal high until the beginning of the last bus cycle; for example, if 100 NPR data cycles are to be transferred, this signal should be held to a logic "1" until the completion of 99 data cycles. This insures that the bus will be given to the highest priority requesting device on the bus at the end of the 100 transfers. The CLR SACK ENB signal is grounded (asserted) so only one bus cycle is done for each request as shown in Figure 4-9.
 
 An interrupt cannot be done by a device which becomes bus master under an NPG. In most NPR applications, the completion of the current set of NPRs is usually followed by an interrupt (now shown). This interrupt may be used to notify the processor that the NPR transfers have completed or an error has occurred during the data transfers.
-
-<!-- Source PDF page 94 -->
 
 ## Section 5: Unibus Configuration
 
@@ -1666,8 +1417,6 @@ A reasonable effort should always be made to ensure that the total cable length 
 
 Prior to configuring the Unibus, review the definitions outlined in Paragraphs 5.2.1 through 5.2.9.
 
-<!-- Source PDF page 95 -->
-
 #### 5.2.1 Bus Segment
 
 The bus segment is defined as that portion of a Unibus system between and including two terminators. A bus segment consists of a terminator, a 120-ohm transmission path (cable) with options containing drivers and receivers attached to it, and another terminator in that order. A single bus system is one which has one bus segment. A multiple bus system is one which has more than one bus segment, usually separated by bus repeaters (DB11s) or bus switches (DT03s which contain bus repeaters).
@@ -1676,21 +1425,19 @@ The bus segment is defined as that portion of a Unibus system between and includ
 
 A bus cable is defined as cable connecting two backplanes which acts as a 120-ohm transmission line with a length of two feet or more. A BC11A cable is defined to be both a cable and a bus element. For our purposes, the cable is a subset of the bus element and should be treated as such. The following bus elements are Unibus cables:
 
-| Element  | Description                 | Metric length as printed |
-| -------- | --------------------------- | ------------------------ |
-| BC11A-2  | 2-foot Unibus cable         | 60.96 cm                 |
-| BC11A-3  | 3-foot Unibus cable         | 91.44 cm                 |
-| BC11A-5  | 5-foot Unibus cable         | 1.52 m                   |
-| BC11A-6  | 6-foot Unibus cable         | 1.82 m                   |
-| BC11A-8F | 8.5-foot Unibus cable       | 2.59 m                   |
-| BC11A-10 | 10-foot Unibus cable        | 3.04 m                   |
-| BC11A-15 | 15-foot Unibus cable        | 4.57 m                   |
-| BC11A-20 | 20-foot Unibus cable        | 6.07 m                   |
-| BC11A-25 | 25-foot Unibus cable        | 8.60 m                   |
-| BC11A-30 | 30-foot Unibus cable        | 9.14 m                   |
-| M9202    | 24-inch folded Unibus cable | 60.96 m [sic]            |
-
-> Source note: PDF page 95 prints 6.07 m, 8.60 m, and 60.96 m in the last rows. These appear to be source errors: 20 ft = 6.096 m, 25 ft = 7.62 m, and 24 in. = 60.96 cm.
+```text
+BC11A-2    2-foot Unibus cable (60.96 cm)
+BC11A-3    3-foot Unibus cable (91.44 cm)
+BC11A-5    5-foot Unibus cable (1.52 m)
+BC11A-6    6-foot Unibus cable (1.82 m)
+BC11A-8F   8.5-foot Unibus cable (2.59 m)
+BC11A-10   10-foot Unibus cable (3.04 m)
+BC11A-15   15-foot Unibus cable (4.57 m)
+BC11A-20   20-foot Unibus cable (6.07 m)
+BC11A-25   25-foot Unibus cable (8.60 m)
+BC11A-30   30-foot Unibus cable (9.14 m)
+M9202      24-inch folded Unibus cable (60.96 m)
+```
 
 The M9207 is considered to be a cable (for the purpose of this specification) because it contains two feet of 120-ohm cable.
 
@@ -1702,29 +1449,24 @@ A bus element is defined as any module, backplane, cable, or group of these item
 
 A lumped load is defined as a group of Unibus elements, other than cables or jumpers, which are interconnected via Unibus jumpers and direct wiring (backplane wire, PC etch) only. The group is not a lumped load if it uses a Unibus cable to interconnect the Unibus elements or if the elements are separated by a bus repeater. (Be certain the difference between "jumper" and "cable" is understood.) (Refer to Figures 5-1 and 5-2).
 
-<!-- Source PDF page 96 -->
+![Figure 5-1. Lumped Loads (Example A)](figures/page-096.png)
 
-![Figure 5-1 — Lumped loads, example A](figures/page-096.png)
-
-<!-- Source PDF page 97 -->
-
-![Figure 5-2 — Lumped loads, example B](figures/page-097.png)
-
-<!-- Source PDF page 98 -->
+![Figure 5-2. Lumped Loads (Example B)](figures/page-097.png)
 
 #### 5.2.5 Bus Terminator
 
 A bus terminator is defined as a Unibus element or part of an element containing a resistive network which connects to the end of a Unibus segment and matches the 120-ohm characteristic impedance of the Unibus transmission path. The M930 and M9306 are Unibus terminators if they connect to the Unibus. The following bus elements contain Unibus terminators:
 
-| Element   | Description                               |
-| --------- | ----------------------------------------- |
-| M981      | Jumper/terminator                         |
-| M9300     | Unibus B terminator (M930 + NPR logic)    |
-| M9301     | Bootstrap/terminator                      |
-| M9302     | M930 with SACK return                     |
-| DT03      | Bus switch                                |
-| DB11-A    | Bus repeater                              |
-| PDP-11/04 | CPU (other CPUs also contain terminators) |
+```text
+M981        jumper/terminator
+M9300       Unibus B terminator (M930 + NPR logic)
+M9301       bootstrap/terminator
+M9302       M930 with SACK return
+DT03        bus switch
+DB11-A      bus repeater
+PDP-11/04   CPU (NOTE: other CPUs also contain
+            terminators)
+```
 
 A Unibus segment must always have a Unibus terminator at each end of its 120-ohm transmission path.
 
@@ -1734,7 +1476,7 @@ A semi-lumped load is defined as a group of lumped loads interconnected by 91.44
 
 #### 5.2.7 AC Unit Load
 
-An ac unit load is defined as a number related to the impedance that a Unibus element presents to a Unibus signal line (due to backplane wiring, PC etch runs, receiver input loading, and driver output loading). This impedance load on a transmission line causes a “reflection” to occur when a step is sent down the line. This reflection shows up on an oscilloscope as a spike occurring shortly after asserting or unasserting edge. Nine lumped ac loads reflect 20 percent, and 20 lumped ac loads reflect 40 percent of a 25 ns risetime step.
+An ac unit load is defined as a number related to the impedance that a Unibus element presents to a Unibus signal line (due to backplane wiring, PC etch runs, receiver input loading, and driver output loading). This impedance load on a transmission line causes a "reflection" to occur when a step is sent down the line. This reflection shows up on an oscilloscope as a spike occurring shortly after asserting or unasserting edge. Nine lumped ac loads reflect 20 percent, and 20 lumped ac loads reflect 40 percent of a 25 ns risetime step.
 
 AC loads must be distributed on the Unibus in the manner described by the rules in this section to provide bus operation with reflections guaranteed to be at or less than a tolerable level.
 
@@ -1744,21 +1486,17 @@ The ac unit load rating of Unibus elements is usually based on the greatest of t
 
 A dc unit load is defined as a number related to the amount of dc leakage current that a Unibus element presents to a Unibus signal line which is high (undriven). A dc unit load is nominally 105 uA (80 uA - receiver, plus 25 uA - driver). However, the dc unit load rating of a bus element is not strictly based on the element's signal line that has the greatest leakage, (e.g., dc leakage is less important on D lines than it is on SSYN).
 
-<!-- Source PDF page 99 -->
-
-![Figure 5-3 — Semi-lumped loads, example C](figures/page-099.png)
-
-<!-- Source PDF page 100 -->
+![Figure 5-3. Semi-Lumped Loads (Example C)](figures/page-099.png)
 
 #### 5.2.9 Unibus Length And Loading
 
-The Unibus is a transmission line on which data transfers are delay-asynchronous and interlocked. Unnecessarily long Unibus cables can cause electrical problems that affect system operation.
+The Unibus is a transmission line on which data transfers are asynchronous and interlocked. Significant electrical delay affecting system operation may, therefore, be imposed through unnecessarily long Unibus cables.
 
-With ribbon cable, the maximum length is 15.24 m (50 ft). Tap and stub lengths should be minimized. Unibus receivers and transmitters should be located together, near the Unibus cable, to buffer the cable from signal lines within the equipment. Individual taps, including printed-circuit etches, should be less than 5.08 cm (2 in.) long, and loading should not exceed one standard bus load. One bus load consists of one transmitter and one receiver.
+With ribbon cable the maximum length is 15.24m (50 ft). For proper operation, the length of taps or stubs must be minimized. The Unibus signals should have receivers and transmitters in one place (near the Unibus cable) to act as buffer between the Unibus and the signal lines carrying Unibus signals within the equipment. The maximum length of ribbon cable is obtainable only if the individual tap lengths are less than 5.08 cm (2 in.), including printed circuit etches and if the loading is not more than one standard bus load. One bus load is defined as one transmitter and one receiver (Refer to the drawing below).
 
 ![Bus-load definition: one transmitter and one receiver connected to the Unibus](figures/bus-load-definition.png)
 
-The Unibus is limited to a maximum of 20 bus loads to maintain a sufficient noise margin. For more than 20 loads, use a Unibus repeater option (DB11-A).
+The Unibus is limited to a maximum of 20 bus loads. This limit is set to maintain a sufficient noise margin. For more than 20 bus loads, a Unibus repeater option (DB11-A) is used.
 
 ### 5.3 Unibus Configuration Rules
 
@@ -1770,9 +1508,7 @@ Rule No. 2 (Maximum dc loading) - The total number of dc unit loads on a Unibus 
 
 Rule No. 3 (Maximum lumped loading) - No lumped load on a Unibus segment should contain more than 20 ac unit loads unless the entire segment consists of one lumped load.
 
-<!-- Source PDF page 101 -->
-
-Rule No. 4 (Skewed cable lengths) - If (a) a lumped load (called the “affected lumped load") has 2.59 m (8.5 ft) or longer cables connected to both bus in and bus out and (b) the sum of the ac unit loads in the two lumped loads connected to the opposite ends of the cables exceeds 18, or (c) the sum of the ac unit loads in the two semi-lumped loads connected to the opposite ends of the cables exceeds 36, then the lengths of these cables should differ by 1.52m (5 ft) or more with the longer cable being on the end with the greatest number of ac unit loads (if there is a practical choice).
+Rule No. 4 (Skewed cable lengths) - If (a) a lumped load (called the "affected lumped load") has 2.59 m (8.5 ft) or longer cables connected to both bus in and bus out and (b) the sum of the ac unit loads in the two lumped loads connected to the opposite ends of the cables exceeds 18, or (c) the sum of the ac unit loads in the two semi-lumped loads connected to the opposite ends of the cables exceeds 36, then the lengths of these cables should differ by 1.52m (5 ft) or more with the longer cable being on the end with the greatest number of ac unit loads (if there is a practical choice).
 
 Rule No. 5 (Skewed cable lengths, supplement) - If the length of one of the cables connected to the affected lumped load in Rule No. 4 must be increased because of that rule, then the longer cable should have at its opposite end, the semi-lumped load with the greater number of ac unit loads. This rule should be implemented only if it is practical to do so, i.e., in cases where its implementation will not increase total cable length more than 1.52 m (5 ft).
 
@@ -1784,9 +1520,7 @@ Rule No. 7 (System acceptance) - Even if Rules No. 1 through No. 5 are implement
 
 If Rule No. 1 is violated, (a) the dc drop across the bus, when driven at one end and received at the other, may be excessive, and (b) far-end crosstalk may be excessive. In calculating lengths, the M920 should be considered as zero feet, the M9202 as 60.96 cm (2 ft), and the BC11A-0 as 15.24 cm (6 in.).
 
-If the length of a segment exceeds 15.24 m (50 ft) reconfiguring (changing the order of bus elements) may reduce the length. If that fails, a DB11-A bus repeater will be necessary.
-
-> Source note: PDF page 101 prints “15.24cm (50 ft)”; the unit is corrected to metres here, consistent with Rule No. 1.
+If the length of a segment exceeds 15.24cm (50 ft) reconfiguring (changing the order of bus elements) may reduce the length. If that fails, a DB11-A bus repeater will be necessary.
 
 #### 5.3.2 Maximum DC Loading (Rule No. 2)
 
@@ -1794,7 +1528,7 @@ If too many dc loads are put on a Unibus segment, the quiescent undriven voltage
 
 #### 5.3.3 Maximum Lumped Loading (Rule No. 3)
 
-If a lumped load is too large, it may generate a reflection on the Unibus large enough to create a false logic signal and cause a <!-- Source PDF page 102 --> failure. Refer to Paragraph 5.3.4, Rule No. 3 Violation (Block Diagram) and Paragraph 5.3.5, Rule No. 3 Violation (Waveform Example). M9202 folded cables (or BC11A-2s, if M9202 is unavailable) should be used in place of M920s to separate large lumped loads. The effect of the M9202 is to cause the peak reflections from the lumped loads it separates to occur at slightly different times. The implementation of Rule No. 3 is illustrated in Paragraph 5.3.6, Rule No. 3 Implementation, (Block Diagram) and Paragraph 5.3.7, Rule No. 3 Implementation (Waveform Example).
+If a lumped load is too large, it may generate a reflection on the Unibus large enough to create a false logic signal and cause a failure. Refer to Paragraph 5.3.4, Rule No. 3 Violation (Block Diagram) and Paragraph 5.3.5, Rule No. 3 Violation (Waveform Example). M9202 folded cables (or BC11A-2s, if M9202 is unavailable) should be used in place of M920s to separate large lumped loads. The effect of the M9202 is to cause the peak reflections from the lumped loads it separates to occur at slightly different times. The implementation of Rule No. 3 is illustrated in Paragraph 5.3.6, Rule No. 3 Implementation, (Block Diagram) and Paragraph 5.3.7, Rule No. 3 Implementation (Waveform Example).
 
 Rule No. 3 states that there is a limit to the number of ac unit loads on a Unibus segment unless the entire segment consists of one lumped load. The reason for this statement is that there is no 120-ohm cable in the segment on which reflections can travel. An example of this paragraph is shown in Paragraph 5.3.8, Multiple Bus System.
 
@@ -1810,8 +1544,6 @@ The reflection may cause the threshold of the 8640 receiver to be crossed a seco
 
 ![Rule 3 violation — driver waveform plus load reflection, producing a threshold-crossing waveform at the receiver](figures/rule-3-violation-waveform.png)
 
-<!-- Source PDF page 103 -->
-
 #### 5.3.6 Rule No. 3 Implementation (Block Diagram)
 
 To implement Rule No. 3, the lumped load must be split into two equal loads by adding an M9202 in place of an M920.
@@ -1825,8 +1557,6 @@ The conditions to satisfy Rule No. 3 are now implemented. When the driver in the
 ![Rule 3 implementation — driver waveform plus reflections from two lumped loads](figures/rule-3-implementation-waveform.png)
 
 Now the 8640 threshold is not crossed and the danger of a failure is reduced.
-
-<!-- Source PDF page 104 -->
 
 #### 5.3.8 Multiple Bus System (Example)
 
@@ -1844,8 +1574,6 @@ This segment violates Rule No. 4 because the sum of the lumped loads that are co
 
 When this rule is violated and when a driver in the affected lumped load unasserts the bus, reflections from the ends of its bus in and bus out cables will arrive at the affected lumped load simultaneously and superimpose. The net reflection may cross the 8640 threshold and cause a failure as shown in the following waveform.
 
-<!-- Source PDF page 105 -->
-
 ![Rule 4 violation waveform showing coincident reflections](figures/rule-4-skewed-waveform.png)
 
 One method to implement Rule No. 4 is to increase the length of one cable to 4.57 m (15 ft) as shown in Paragraph 5.3.10, Rule No. 4 Implementation (Example A), Block Diagram and another method is to shift the lumped load on the left into two lumped loads using an M9202 as shown in Paragraph 5.3.11, Rule No. 4 Implementation (Example B), Block Diagram. When this rule is implemented by making the lengths of the bus in and bus out cables different, the reflections will arrive at slightly different times as shown in Paragraph 5.3.12, Rule No. 4 Implementation, (Waveform Example). The reflection does not cross the 8640 threshold and the danger of a failure is reduced.
@@ -1854,15 +1582,13 @@ The configuration in Paragraph 5.3.11 does not violate Rule No. 4 because the su
 
 The methods shown in Paragraphs 5.3.10 and 5.3.11 could be used to implement Rule No. 4 but the method in Paragraph 5.3.11 is more desirable because it minimizes the total cable length of the segment.
 
-#### 5.3.10 Rule No. 4 Implementation (Example A)
+#### 5.3.10 Rule No. 4 Implementation (Example A) Block Diagram
 
 The following sketch illustrates this rule.
 
-![Rule 4 implementation, example A — lengthened cable](figures/rule-4-example-a.png)
+![Rule No. 4 Implementation (Example A) Block Diagram](figures/scan-rule-4-example-a.png)
 
-<!-- Source PDF page 106 -->
-
-#### 5.3.11 Rule No. 4 Implementation (Example B)
+#### 5.3.11 Rule No. 4 Implementation (Example B) Block Diagram
 
 The following diagram illustrates this rule.
 
@@ -1882,8 +1608,6 @@ Suppose that the length of Cable No. 1 equals the length of Cable No. 2. This vi
 
 The reflection in this waveform crosses the 8640 threshold and may cause a failure. The best way to implement Rule No. 4 in this example is to increase the length of either Cable No. 1 or Cable No. 2 by 1.52 m (5 ft). Suppose the length of Cable No. 2 is increased by 1.52m (5 ft). (This violates Rule No. 5 because this is the end with the smaller lumped load.) In this case, the affected lumped load will see the waveform as shown in Paragraph 5.3.16, Violation of Rule No. 5, Waveform Example, when its driver unasserts the bus.
 
-<!-- Source PDF page 107 -->
-
 The reflection in this waveform also crosses the 8640 threshold and may cause a failure.
 
 Now suppose the length of Cable No. 1 is increased by 1.52m (5 ft) instead of Cable No. 2. This will implement Rule No. 5 correctly. In this case, the affected lumped load will see the waveform as shown in Paragraph 5.3.17, Rule No. 5 Implementation, Waveform Example when its driver unasserts the bus. The reflection from the ends of Cables No. 1 and No. 2 do superimpose somewhat, but not much. As a result, the 8640 threshold is not crossed.
@@ -1899,8 +1623,6 @@ The following block diagram is an example of this violation.
 The following waveform is an example of this violation.
 
 ![Skewed cable-length violation waveform](figures/rule-4-skew-length-waveform.png)
-
-<!-- Source PDF page 108 -->
 
 #### 5.3.16 Violation Of Rule No. 5 (Waveform Example)
 
@@ -1918,13 +1640,9 @@ The following waveform is an example of this implementation.
 
 Rules No. 1 through No. 5 should be implemented if possible. On rare occasions it may not be practical to do so. For example, the last bus segment on a system may exceed the 15.24 m (50 ft) maximum length rule by 1.52m (5 ft), and implementing Rule No. 1 may require another DB11-A repeater, which may require another BA11-ES expander box, which may require another H969 cabinet. In this case, it is acceptable to violate Rule No. 1, providing that the system is tagged so that Rule No. 6 is always followed when the system undergoes change or corrective maintenance. Common sense has to be exercised if any of Rules No. 1 through No. 5 are violated.
 
-<!-- Source PDF page 109 -->
-
 #### 5.3.19 System Acceptance (Rule No. 7)
 
 On rare occasions, Rules No. 1 through No. 5 may not be sufficient to eliminate all reflection problems. On these occasions, a field service support group should be called. The solution may be to replace an additional M920 in those surrounding options with an M9202 (or even a BC11A-3) to further spread out and reduce reflections.
-
-<!-- Source PDF page 110 -->
 
 ## Appendix A: Glossary Of Unibus Terms
 
@@ -1948,7 +1666,7 @@ The time interval, measured at the bus terminals of a slave, between receipt of 
 
 Release of the bus (by negating BBSY) by a device which has caused an interrupt.
 
-(See “Passive Release.")
+(See "Passive Release.")
 
 ### Address
 
@@ -1961,8 +1679,6 @@ An address is transmitted on the Unibus as an 18-bit binary number.
 Transmission medium used on the Unibus for an address represented as an 18 bit binary number.
 
 A lines are Type-1 lines.
-
-<!-- Source PDF page 111 -->
 
 ### Arbitration Network
 
@@ -2008,8 +1724,6 @@ BGs are transmitted on Type-2 lines.
 
 Pertaining to a number system with a radix of 2.
 
-<!-- Source PDF page 112 -->
-
 ### Binary Digit
 
 (1) One of the two states (0 or 1) of the binary number system. Usually referred to as a "bit."
@@ -2036,7 +1750,7 @@ Transfer of several words of data from/to sequential addresses.
 
 Can be performed on the Unibus by either a series of single transfers or by a multiple transfer.
 
-(See “Data Transfer.")
+(See "Data Transfer.")
 
 ### BR4, BR5, BR6, BR7 (Bus Request n)
 
@@ -2050,8 +1764,6 @@ BRs are transmitted on Type-1 lines.
 
 To avoid confusion, the terms "BR4," "BR5," "BR6," and "BR7" are not used in this specification to designate priority levels.
 
-<!-- Source PDF page 113 -->
-
 ### Buffer (register)
 
 Temporary storage.
@@ -2060,7 +1772,7 @@ Temporary storage.
 
 A transmission medium that interconnects the various parts of a computing system.
 
-This term, as used in this specification, is synonymous with "Unibus.”
+This term, as used in this specification, is synonymous with "Unibus."
 
 ### Bus Busy
 
@@ -2093,8 +1805,6 @@ A maximum of one driver and one receiver, or one transceiver. The Unibus is limi
 (1) A device or a processor that is currently permitted to use the data section of the Unibus.
 
 (2) A device which is asserting BBSY.
-
-<!-- Source PDF page 114 -->
 
 ### (Bus) Receiver
 
@@ -2134,15 +1844,13 @@ The sequence of signals which complete a logical unit of activity on the Unibus.
 
 A circuit containing a bus driver and a bus receiver.
 
-<!-- Source PDF page 115 -->
-
 ### (Bus) Transmitter
 
-(See “(Bus) Driver.")
+(See "(Bus) Driver.")
 
 ### Byte
 
-A group of eight binary digits that may be operated upon as a unit; a half word. (See "high-order byte" and “low-order byte.")
+A group of eight binary digits that may be operated upon as a unit; a half word. (See "high-order byte" and "low-order byte.")
 
 ### C Lines
 
@@ -2168,7 +1876,7 @@ A device register that contains information needed to communicate with the devic
 
 ### Control Lines (C lines)
 
-Unibus transmission medium used by a master to indicate to a slave which type of data transfer operation is required,
+Unibus transmission medium used by a master to indicate to a slave which type of data transfer operation is required.
 
 The C lines are Type-1 lines.
 
@@ -2179,8 +1887,6 @@ Interface which allows a device to be attached to the Unibus and to be manipulat
 ### Core Memory
 
 A read/write random access memory using ferrite cores as storage elements.
-
-<!-- Source PDF page 116 -->
 
 ### CP, CPU
 
@@ -2228,8 +1934,6 @@ Contraction of "data-in, pause."
 
 Transaction involving transfer of one word of data from slave to master; the restore cycle is inhibited in destructive readout devices, since the DATIP must be followed by DATO or a DATOB to the same location.
 
-<!-- Source PDF page 117 -->
-
 ### DATO
 
 Contraction of "data-out."
@@ -2238,7 +1942,7 @@ Transaction involving transfer of one word of data from master to slave.
 
 ### DATOB
 
-Contraction of “data-out, byte."
+Contraction of "data-out, byte."
 
 Transaction involving transfer of one byte of data from master to slave.
 
@@ -2274,8 +1978,6 @@ The delay introduced into a circuit to compensate for skew.
 
 (See "(Bus) Device.")
 
-<!-- Source PDF page 118 -->
-
 ### Device Register
 
 A register accessed via a Unibus address.
@@ -2310,15 +2012,13 @@ A graphical representation of the sequence of operations required to carry out a
 
 ### Grant
 
-Generic term used for NPG as well as for BG7, BG6, BG5, and BG4. The term “Bus Grant" is used in this specification only in reference to BG7, BG6, BG5 and BG 4,
+Generic term used for NPG as well as for BG7, BG6, BG5, and BG4. The term "Bus Grant" is used in this specification only in reference to BG7, BG6, BG5 and BG4.
 
 ### High-Order Byte
 
 The byte occupying bit positions 8 through 15 in a word. Bit A00 of the address of a high order byte is 1.
 
 (See "Low-Order Byte.")
-
-<!-- Source PDF page 119 -->
 
 ### Inhibit
 
@@ -2344,7 +2044,7 @@ A transaction in which a control signal transmitted by the initiator is positive
 
 (1) Entry into a sub-program, triggered by an interrupt transaction from the Unibus.
 
-(2) A signal to a computer that stops the execution of an ongoing program while a higher priority program is executed; also, a circuit that conveys such a signal (from “Webster's New Collegiate Dictionary).
+(2) A signal to a computer that stops the execution of an ongoing program while a higher priority program is executed; also, a circuit that conveys such a signal (from "Webster's New Collegiate Dictionary).
 
 ### Interrupt Fielding Processor
 
@@ -2352,7 +2052,7 @@ A transaction in which a control signal transmitted by the initiator is positive
 
 ### Interrupt Transaction
 
-A bus cycle during which an interrupt vector is transmitted to the processor.
+A busy cycle during which an interrupt vector is transmitted to the processor.
 
 ### Interrupt Vector
 
@@ -2360,15 +2060,13 @@ A data word transferred by a device during an interrupt transaction.
 
 Used by PDP-11s to point to memory locations containing new program counter and processor status word values.
 
-<!-- Source PDF page 120 -->
-
 ### INTR (Interrupt)
 
 Asserted by an interrupting device, after it becomes bus master, to inform the processor that an interrupt is to be performed, and that the interrupt vector is present on the D line.
 
 ### Latency
 
-(1) LATENCY is the delay between the time that a device initiates a transaction and the time that it receives a response,
+(1) LATENCY is the delay between the time that a device initiates a transaction and the time that it receives a response.
 
 Thus, if a device requests the use of the data section of the bus, is granted the use of the bus, and then receives the negation of BBSY (signifying that the previous master has released the data section of the bus), then latency is the delay between the assertion of the request and the receipt of the negation of BBSY by the requesting device.
 
@@ -2384,21 +2082,19 @@ Bit 0 on the Unibus; the rightmost bit in a word or byte; represents the base 2 
 
 ### Line
 
-A transmission medium. (See “Type-1 line," "Type-2 line," "Type-3 line.")
+A transmission medium. (See "Type-1 line," "Type-2 line," "Type-3 line.")
 
 ### Location
 
 A word or byte of memory or a register. The address is the name of a location.
 
-<!-- Source PDF page 121 -->
-
 ### Low-Order Byte
 
-The byte occupying bit positions 0 through 7 in a word. Bit A00 of the address of a low order byte is 0. (See “High-Order Byte.")
+The byte occupying bit position 0 through 7 in a word. Bit A00 of the address of a low order byte is 0. (See "High-Order Byte.")
 
 ### LSB
 
-(See “Least Significant Bit.")
+(See "Least Significant Bit.")
 
 ### Main Memory
 
@@ -2424,9 +2120,9 @@ A device in which programs and data can be stored and from which they can be ret
 
 The leftmost bit in a number.
 
-Represents the 2 to the 7th power binary position in a byte, the 2 to the 15th power binary position in a word, the 2 to the 17th power binary position in a Unibus address,
+Represents the 2 to the 7th power binary position in a byte, the 2 to the 15th power binary position in a word, the 2 to the 17th power binary position in a Unibus address.
 
-(See "Word," "Least Significant Bit.")
+(See "Word;" "Least Significant Bit.")
 
 ### MSB
 
@@ -2435,8 +2131,6 @@ Represents the 2 to the 7th power binary position in a byte, the 2 to the 15th p
 ### MSYN (Master Sync)
 
 The assertion of MSYN requests that the slave defined by the A lines performs the function required by the C lines.
-
-<!-- Source PDF page 122 -->
 
 The negation of MSYN indicates to the slave that the master considers the data transfer concluded.
 
@@ -2472,7 +2166,7 @@ A data transfer between a device and an address (which, typically, is a device) 
 
 In response to an NPR, the arbitrator asserts NPG to inform a device that it has been designated as the next bus master.
 
-The arbitrator negates NPG in response to the receipt of the assertion of SACK.
+In arbitrator negates NPG in response to the receipt of the assertion of SACK.
 
 NPG is transmitted on a Type-2 line.
 
@@ -2482,9 +2176,7 @@ NPG is transmitted on a Type-2 line.
 
 NPR is transmitted on a Type-1 line.
 
-(2) The term “Priority level NPR" refers to the highest priority level that may be assigned to a bus device.
-
-<!-- Source PDF page 123 -->
+(2) The term "Priority level NPR" refers to the highest priority level that may be assigned to a bus device.
 
 ### NPR Latency
 
@@ -2506,7 +2198,7 @@ PA and PB are transmitted on Type-1 lines.
 
 ### Parity
 
-A simple check on the validity of a number. A bit is appended to the number, which makes the sum of the 1s in the number (including the appended bit) odd for odd parity and even for even parity. The appended bit is called the “parity bit."
+A simple check on the validity of a number. A bit is appended to the number, which makes the sum of the 1s in the number (including the appended bit) odd for odd parity and even for even parity. The appended bit is called the "parity bit."
 
 Parity is checked by adding up the 1's in the number (including the parity bit). If this sum is odd (for odd parity), or even (for even parity), no odd number of bits has changed.
 
@@ -2526,13 +2218,11 @@ Release of the bus (by negating BBSY) by a device which obtained control by a BG
 
 (See "Active Release.")
 
-<!-- Source PDF page 124 -->
-
 ### Power Fail Features
 
 Circuitry associated with AC LO and DC LO that allows the Unibus to stop properly on power failure, and to restart properly when power returns.
 
-(See "AC LO“, "DC LO.")
+(See "AC LO", "DC LO.")
 
 ### Priority
 
@@ -2561,8 +2251,6 @@ A processor that has special connections to the arbitrator. These special connec
 ### Program
 
 A sequence of instructions as interpreted by a processor.
-
-<!-- Source PDF page 125 -->
 
 ### Propagation Delay
 
@@ -2602,8 +2290,6 @@ To return to its original condition. Normally refers to a core memory restore cy
 
 A device asserts SACK to acknowledge that it has accepted a grant. The arbitrator is disabled while SACK is asserted.
 
-<!-- Source PDF page 126 -->
-
 The negation of SACK by a master signifies that it has almost finished transferring data; this allows the start of a new priority arbitration cycle.
 
 SACK is transmitted on a Type-1 line.
@@ -2616,7 +2302,7 @@ SACK is transmitted on a Type-1 line.
 
 To ensure that a storage element is in the true state.
 
-### Set To
+### Set To "x"
 
 To enter a value "x" in a storage device.
 
@@ -2632,7 +2318,7 @@ To enter a value "x" in a storage device.
 
 ### Slave Sync
 
-(See “SSYN.")
+(See "SSYN.")
 
 ### SSYN (Slave Sync)
 
@@ -2643,8 +2329,6 @@ In an interrupt operation, SSYN is asserted by the interrupt fielding processor 
 The next bus master waits for the negation of SSYN before beginning the next data transfer operation.
 
 SSYN is transmitted on a Type-1 line.
-
-<!-- Source PDF page 127 -->
 
 ### Strobe
 
@@ -2664,11 +2348,11 @@ Action taken if an expected response is not received within a specified time; th
 
 ### Transaction
 
-(See “(Bus) Transaction.")
+(See "(Bus) Transaction.")
 
 ### Transceiver
 
-(See “(Bus) Transceiver.”)
+(See "(Bus) Transceiver.")
 
 ### Transfer (noun)
 
@@ -2689,8 +2373,6 @@ Only one word or byte is transferred between master and slave on the authority o
 ### Transmitter
 
 (See "(Bus) Transmitter.")
-
-<!-- Source PDF page 128 -->
 
 ### Type-1 Line
 
@@ -2718,17 +2400,13 @@ The hardware and logic needed to allow communication between devices over a Unib
 
 ### Vector
 
-(See “Interrupt Vector.")
-
-<!-- Source PDF page 129 -->
+(See "Interrupt Vector.")
 
 ### Word
 
-A 16-bit unit of data.
+A 15-bit unit of data.
 
 A word address is always an even number. A word has the same address as its low order byte.
-
-<!-- Source PDF page 130 -->
 
 ## Appendix B: Unibus Hardware
 
@@ -2762,15 +2440,11 @@ Listed below are the drivers, receivers, and transceivers used to interface with
 2. 8641, 964 — Quad transceiver (receiver/driver)
 3. 8881, 957 — Quad NAND gate (driver)
 
-<!-- Source PDF page 131 -->
-
 ### B.6 Unibus Connector Block Pin Assignments
 
 Unibus cable normally plugs into rows A and B of a slot in a backplane. The Unibus signals (including grounds and +5 Volts) are listed in the following list by pin numbers and by signal names.
 
 Note that +5 Volts is intended for terminator cards (M930, M981) only. +5 Volts should never be connected in the Unibus between system units.
-
-**Assignments by pin**
 
 | Pin | Signal       | Pin | Signal       |
 | --- | ------------ | --- | ------------ |
@@ -2778,7 +2452,7 @@ Note that +5 Volts is intended for terminator cards (M930, M981) only. +5 Volts 
 | AA2 | POWER (+5 V) | BA2 | POWER (+5 V) |
 | AB1 | INTR L       | BB1 | BG5 H        |
 | AB2 | GROUND       | BB2 | GROUND       |
-| AC1 | D00 L        | BC1 | BR5 L*       |
+| AC1 | D00 L        | BC1 | R5L          |
 | AC2 | GROUND       | BC2 | GROUND       |
 | AD1 | D02 L        | BD1 | GROUND       |
 | AD2 | D01 L        | BD2 | BR4 L        |
@@ -2810,12 +2484,6 @@ Note that +5 Volts is intended for terminator cards (M930, M981) only. +5 Volts 
 | AU2 | BR6 L        | BU2 | C0 L         |
 | AV1 | BG7 H        | BV1 | MSYN L       |
 | AV2 | GROUND       | BV2 | GROUND       |
-
-*PDF page 131 prints “R5L” for BC1; the signal-sorted list on PDF page 132 confirms BR5 L.
-
-<!-- Source PDF page 132 -->
-
-**Assignments by signal**
 
 | Signal  | Pin | Signal  | Pin |
 | ------- | --- | ------- | --- |
